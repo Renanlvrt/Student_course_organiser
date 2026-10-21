@@ -73,7 +73,7 @@ def out_dir(cfg, module, part, folder):
 
 
 # ------------------------------------------------------------------ step 1b
-def map_notes(cfg, module, runner_name="claude", log=print):
+def map_notes(cfg, module, runner_name="agy", log=print):
     md_dir, man = notes_docs(cfg, module)
     outlines = []
     for part in module.parts:
@@ -150,7 +150,7 @@ def capture(cfg, module, part, folder, runner_name="claude", log=print):
     (od / f"{stem} - Master.md").write_text(master + "\n", encoding="utf-8")
     _write_json(od / f"{stem} - concepts.json", concepts)
     (od / f"{stem} - capture-selfaudit.md").write_text(text.split("JSON>>>")[-1].strip() + "\n", encoding="utf-8")
-    log(f"{lid} captured: {len(concepts)} concepts ({usage.get('seconds')}s, 5h {usage.get('five_hour')})")
+    log(f"{lid} captured: {len(concepts)} concepts ({runner.describe(usage)})")
 
 
 def audit(cfg, module, part, folder, runner_name="claude", log=print):
@@ -169,7 +169,9 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
             LECTURE_MD_FILES="the sources below", NOTES_MD_SECTIONS="(included below)", MASTER_MD="below",
             CONCEPTS_JSON="below", OUT_DIR=od, LECTURE_STEM=stem,
             SOURCES=_sources_text(sources), MASTER=master, CONCEPTS=concepts)
-        text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+        # a different model from capture (Gemini): Sonnet, through agy on Google's quota when possible
+        model = "claude-sonnet-5-5-high" if runner_name == "agy" else "sonnet"
+        text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
         result = json_block(text, "AUDIT")
         counts = {k: len(result.get(k, [])) for k in ("missing", "distorted", "unsupported", "concepts_missing")}
         status["rounds"].append({"counts": counts, "result": result})
@@ -237,7 +239,7 @@ def teaching(cfg, module, part, folder, runner_name="claude", log=print):
     text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
     t = json_block(text)
     _write_json(od / f"{stem} - teaching.json", t)
-    log(f"{lid} teaching: {len(t)} concepts designed ({usage.get('seconds')}s, 5h {usage.get('five_hour')})")
+    log(f"{lid} teaching: {len(t)} concepts designed ({runner.describe(usage)})")
 
 
 def exercises(cfg, module, part, folder, runner_name="claude", log=print):
@@ -276,7 +278,7 @@ def exercises(cfg, module, part, folder, runner_name="claude", log=print):
         done["batches"].append(b)
         _write_json(part_path, done)
         log(f"{lid} exercises batch {b + 1}/{len(batches)}: {len(done['exercises'])} so far "
-            f"({usage.get('seconds')}s, 5h {usage.get('five_hour')})")
+            f"({runner.describe(usage)})")
     _write_json(od / f"{stem} - exercises.json", done["exercises"])
     part_path.unlink()
     log(f"{lid} exercises: {len(done['exercises'])}")
@@ -299,7 +301,7 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     vis_dir.mkdir(parents=True, exist_ok=True)
     (vis_dir / f"{lid}.js").write_text(js + "\n", encoding="utf-8")
     log(f"{lid} visuals: {js.count('Study.visuals[')} concepts, {js.count('Study.selftest(')} self-tests "
-        f"({usage.get('seconds')}s, 5h {usage.get('five_hour')})")
+        f"({runner.describe(usage)})")
 
 
 def _read_json(p, default):
@@ -319,7 +321,7 @@ def run_lecture(cfg, module, part, number, steps, runner_name="claude", log=prin
     if not folder:
         raise runner.RunnerError(f"No 'Lecture {number:02d} - …' folder in {part_dir(cfg, module, part)}")
     for s in steps:
-        result = STEPS[s](cfg, module, part, folder, runner_name=runner_name, log=log)
+        result = STEPS[s](cfg, module, part, folder, runner_name=runner.pick(runner_name, s), log=log)
         if s == "audit" and result != "PASS":
             log(f"Stopping: audit verdict is {result!r}; see '{folder.name} - audit.json'.")
             return

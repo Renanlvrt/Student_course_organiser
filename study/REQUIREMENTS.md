@@ -165,3 +165,14 @@ This is a record of what I asked for. Open questions are at the bottom and are f
 - **Cost finding:** on Claude Code (Sonnet), one 4-page fix batch uses about 3% of the 5-hour window, and that
   window is shared with my interactive Claude sessions. The automatic stop at 85% worked. → Bulk steps
   (1, 1b, 2, 9) must run on Google's quota (Gemini CLI or agy), with Claude for site visuals only.
+
+## Round 5 (2026-10-21)
+- **Colours, updated:** white can go, **light theme** (not dark), **Apple-style system colours** (soft, not
+  primary colours), still **no purple**. → `site.css` now uses an off-white page and the accessible system
+  teal / orange / blue / red / green; dark mode only when toggled.
+- **Phone access:** each module gets its own repo with the site published on GitHub Pages; the README carries the
+  github.io link. Crypto → `Renanlvrt/Cryptography`.
+- **Split of work:** Antigravity (agy, Google quota) does the reading and teaching content (fix pages, map
+  notes, capture, audit, registry, teaching, exercises, mocks). Claude Code does only the visuals, interactive
+  sandboxes and videos. Don't spend Claude tokens on simple reading.
+- **Headless agy:** use it the way `semi-automated-placement` does: `agy -p <PROMPT FILE PATH> --print-timeout Nm`.

@@ -13,7 +13,7 @@ def main(argv=None):
     c.add_argument("--force", action="store_true", help="reconvert unchanged PDFs too")
     f = sub.add_parser("fix", help="Step 1: rewrite flagged pages from page images (vision model)")
     f.add_argument("module")
-    f.add_argument("--runner", default="claude", choices=["claude", "agy"])
+    f.add_argument("--runner", default="agy", choices=["claude", "agy"])
     f.add_argument("--model", default="sonnet")
     f.add_argument("--limit", type=int, help="stop after this many model calls")
     n = sub.add_parser("mapnotes", help="Step 1b: assign every page of module-wide notes to a lecture")
@@ -23,13 +23,16 @@ def main(argv=None):
     lec.add_argument("part")
     lec.add_argument("number", type=int)
     lec.add_argument("--steps", default="capture,audit,registry,teaching,exercises,visuals")
-    lec.add_argument("--runner", default="claude", choices=["claude", "agy"])
+    lec.add_argument("--runner", default="auto", choices=["auto", "claude", "agy"],
+                     help="auto: Claude for visuals, Antigravity for everything else")
     st = sub.add_parser("site", help="Build Website/<Part>/ from the pipeline output")
     st.add_argument("module")
     st.add_argument("part")
     ck = sub.add_parser("check", help="Coverage check: is every concept fully built?")
     ck.add_argument("module")
     ck.add_argument("part")
+    pb = sub.add_parser("publish", help="Push the built sites to the module's GitHub repo + Pages (phone access)")
+    pb.add_argument("module")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -51,6 +54,9 @@ def main(argv=None):
     elif args.cmd == "site":
         from .site import build_site
         build_site(cfg, module, args.part)
+    elif args.cmd == "publish":
+        from .publish import publish
+        publish(cfg, module)
     elif args.cmd == "check":
         from .check import check_part
         sys.exit(1 if check_part(cfg, module, args.part) else 0)

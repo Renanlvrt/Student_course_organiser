@@ -31,7 +31,7 @@ Study.selftest("LFSR degree-4 example", () => lfsrRun([0,1,1,0], [1,1,0,0], 10).
 - `C` holds the colour tokens. Use them with **one meaning each**, never raw hex: `C.plain` / `C.plainTint` =
   plaintext and inputs, `C.key` / `C.keyTint` = keys, seeds and secrets, `C.cipher` / `C.cipherTint` =
   ciphertext and outputs (and "wrong"), `C.ok` = correct, `C.teal` = structure and highlights, `C.ink`,
-  `C.muted`, `C.rule`, `C.tint`. **No purple or violet.** The page is white.
+  `C.muted`, `C.rule`, `C.tint`. **No purple or violet.** The page is light (off-white); colours are soft Apple-style system hues, never pure primaries.
 - CSS helpers you can use: `.bits` (+ `.key` / `.plain` / `.cipher`) containing `<i>` cells for bit strings,
   `<button>`, `<button class="primary">`, `<input>`, `<select>`.
 - SVG uses a `viewBox` so it scales. Labels are ≥ 13px at 640px wide. It must look good at 360px wide (mobile).

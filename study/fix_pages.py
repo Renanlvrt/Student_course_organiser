@@ -85,8 +85,7 @@ def fix_module(cfg, module, runner_name="claude", model="sonnet", limit=None, lo
                 md_path.write_text(join_pages(head, pages), encoding="utf-8")
                 man_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
                 cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
-                log(f"fixed {stem} pages {batch} ({usage.get('seconds')}s, "
-                    f"5h {usage.get('five_hour')}, week {usage.get('seven_day')})")
+                log(f"fixed {stem} pages {batch} ({runner.describe(usage)})")
             md_path.write_text(join_pages(head, pages), encoding="utf-8")
             man_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return calls
