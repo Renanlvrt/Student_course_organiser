@@ -176,3 +176,15 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   notes, capture, audit, registry, teaching, exercises, mocks). Claude Code does only the visuals, interactive
   sandboxes and videos. Don't spend Claude tokens on simple reading.
 - **Headless agy:** use it the way `semi-automated-placement` does: `agy -p <PROMPT FILE PATH> --print-timeout Nm`.
+- **Pages decision (asked 2026-10-21):** GitHub Pages from the private repo, **unlisted public URL** (noindex +
+  robots.txt). Pages was accepted on the private repo. Live: https://renanlvrt.github.io/Cryptography/
+- **Why headless agy used to hang:** it waited for the StitchMCP server, which never connected. With my OK,
+  StitchMCP was disabled in `~/.gemini/antigravity-ide/mcp_config.json` and removed from
+  `~/.gemini/config/mcp_config.json` (backups `*.bak-2026-10-21` next to both). If Stitch is missing in the
+  IDE, this is why; restore the backup to get it back.
+- Checked: Gemini Argon High page fixes match the Sonnet quality (exact LaTeX, figures transcribed, typos flagged),
+  4 pages in about 2 min, with zero Claude tokens.
+- **Round 6:** the published layout is "absolutely perfect". Wanted: the content, the interactive parts, all
+  the animations **and short videos**; **buttons instead of plain links** (done: part picker, lecture tiles,
+  today's actions). Videos: step 7c (`07c_videos.md`), 1–3 per lecture, 30–60 s, silent with captions,
+  written by Claude, rendered locally with Manim 0.19 (free), shown under the concept.

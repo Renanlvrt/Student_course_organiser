@@ -10,6 +10,7 @@
   const allCards = () => Object.values(window.LECTURES || {}).flatMap((l) => (l.teaching || []).flatMap((t) =>
     (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k, concept: t.id }, c))));
   const conceptName = (id) => { for (const l of Object.values(window.LECTURES || {})) for (const c of l.concepts || []) if (c.id === id) return c.name; return id; };
+  const conceptVideo = (id) => { for (const l of Object.values(window.LECTURES || {})) for (const v of l.videos || []) if (v.concept === id) return v; return null; };
   const conceptLecture = (id) => { for (const l of Object.values(window.LECTURES || {})) if ((l.concepts || []).some((c) => c.id === id)) return l.id; return null; };
 
   /* ---------------------------------------------------------------- index.html */
@@ -25,19 +26,20 @@
           const ids = (data ? data.concepts : []).map((c) => c.id);
           const st = ids.map(S.progress.status);
           const good = st.filter((s) => s === "good").length, weak = st.filter((s) => s === "weak").length;
-          return h("li", {}, h("span", { class: "dot " + (weak ? "weak" : good === ids.length && ids.length ? "good" : good ? "seen" : "") }),
-            h("a", { href: "lecture.html?id=" + l.id }, l.title),
-            h("span", { class: "tag" }, ids.length ? good + " of " + ids.length + " concepts mastered" + (weak ? ", " + weak + " weak" : "") : "not built yet"));
+          return h("li", {}, h("a", { class: "tile", href: "lecture.html?id=" + l.id },
+            h("span", { class: "dot " + (weak ? "weak" : good === ids.length && ids.length ? "good" : good ? "seen" : "") }),
+            h("span", { class: "name" }, l.title),
+            h("span", { class: "tag" }, ids.length ? good + " of " + ids.length + " concepts mastered" + (weak ? ", " + weak + " weak" : "") : "not built yet")));
         })),
         h("h2", {}, "Today"),
         todayBox()));
   }
   function todayBox() {
     const cards = allCards(), due = S.srs.due(cards).length, weak = S.progress.weak();
-    return h("div", { class: "ui" },
-      h("p", {}, due ? h("a", { href: "practice.html?tab=recall" }, due + " flashcards are due") : "No flashcards due."),
-      h("p", {}, weak.length ? h("a", { href: "practice.html?tab=weak" }, weak.length + " weak topics to revisit") : "No weak topics yet. Answer some exercises and they will show up here."),
-      h("p", {}, h("a", { href: "practice.html?tab=gym" }, allExercises().length + " exercises in the gym")));
+    return h("div", { class: "ui actions" },
+      h("a", { class: "btn" + (due ? " primary" : ""), href: "practice.html?tab=recall" }, due ? due + (due === 1 ? " flashcard is due" : " flashcards are due") : "Flashcards (none due)"),
+      h("a", { class: "btn", href: "practice.html?tab=weak" }, weak.length ? weak.length + " weak topics to revisit" : "Weak topics (none yet)"),
+      h("a", { class: "btn", href: "practice.html?tab=gym" }, allExercises().length + " exercises in the gym"));
   }
 
   /* ---------------------------------------------------------------- lecture.html */
@@ -105,6 +107,9 @@
       const vis = S.visuals[c.id] || {};
       if (t.animation || vis.animation) sec.append(S.stepper(Object.assign({ title: (t.animation || {}).title }, vis.animation || {})));
       if (t.sandbox || vis.sandbox) sec.append(S.sandbox(Object.assign({ title: (t.sandbox || {}).title, challenge: (t.sandbox || {}).challenge }, vis.sandbox || {}), c.id));
+      const vid = conceptVideo(c.id);
+      if (vid) sec.append(h("figure", { class: "film" }, h("video", { src: vid.file, controls: "", playsinline: "", preload: "metadata" }),
+        h("figcaption", { class: "ui" }, "Short film: " + (vid.title || c.name))));
       if (t.hero_visual) sec.append(h("div", { "data-hero": c.id }));
       for (const mstk of t.misconceptions || []) sec.append(S.mdEl("div", "**Common misconception.** " + (typeof mstk === "string" ? mstk : JSON.stringify(mstk)), "mistake read"));
       for (const tip of t.exam_tips || []) sec.append(S.mdEl("div", "**Exam tip.** " + tip, "tip read"));

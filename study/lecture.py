@@ -304,6 +304,68 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
         f"({runner.describe(usage)})")
 
 
+def _render_scenes(py_file, classes, media):
+    """Render each Scene class with Manim; returns ({class: mp4 path}, {class: error tail})."""
+    import subprocess
+    done, failed = {}, {}
+    for cls in classes:
+        proc = subprocess.run(["manim", "-qm", "--disable_caching", "--media_dir", str(media), str(py_file), cls],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
+        mp4 = next(iter(media.glob(f"videos/{py_file.stem}/*/{cls}.mp4")), None)
+        if proc.returncode or not mp4:
+            failed[cls] = (proc.stderr or proc.stdout)[-1500:]
+        else:
+            done[cls] = mp4
+    return done, failed
+
+
+def videos(cfg, module, part, folder, runner_name="claude", log=print):
+    """Step 7c: Claude writes one Manim scene per `video` storyboard; Manim renders them locally (free)."""
+    import shutil
+    import tempfile
+    from .site import site_dir
+    lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
+    index = od / f"{stem} - videos.json"
+    if index.exists():
+        return log(f"{lid} videos exist")
+    teaching = _read_json(od / f"{stem} - teaching.json", [])
+    if not any(t.get("video") for t in teaching):
+        _write_json(index, [])
+        return log(f"{lid} videos: none planned")
+    prompt = runner.build_prompt("07c_videos.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part,
+                                 TEACHING=json.dumps(teaching, ensure_ascii=False),
+                                 MASTER=(od / f"{stem} - Master.md").read_text(encoding="utf-8"))
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+    code, listing = block(text, "MANIM_PY"), json_block(text, "VIDEOS")
+    py = od / f"{stem} - videos.py"
+    out = site_dir(cfg, module, part) / "videos"
+    out.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "scenes.py"
+        src.write_text(code, encoding="utf-8")
+        done, failed = _render_scenes(src, [v["class"] for v in listing], tmp / "media")
+        if failed:                                       # one repair round, with the render errors
+            errors = "\n\n".join(f"### {c}\n```\n{e}\n```" for c, e in failed.items())
+            fix = (prompt + f"\n\n## Your previous file\n```python\n{code}\n```\n\n## Render errors\n{errors}\n\n"
+                   "Fix the failing scenes and reply with the complete corrected file and the list, same markers.")
+            text, _ = runner.run(cfg, fix, runner=runner_name, model="sonnet", timeout=3600)
+            code, listing = block(text, "MANIM_PY"), json_block(text, "VIDEOS")
+            src.write_text(code, encoding="utf-8")
+            retry, failed = _render_scenes(src, list(failed), tmp / "media")
+            done.update(retry)
+        py.write_text(code, encoding="utf-8")
+        result = []
+        for v in listing:
+            if v["class"] in done:
+                name = re.sub(r"[^A-Za-z0-9]+", "_", v["concept"]) + ".mp4"
+                shutil.copy2(done[v["class"]], out / name)
+                result.append({"concept": v["concept"], "title": v.get("title", ""), "file": "videos/" + name})
+    _write_json(index, result)
+    log(f"{lid} videos: {len(result)} rendered" + (f", FAILED: {sorted(failed)}" if failed else "") +
+        f" ({runner.describe(usage)})")
+
+
 def _read_json(p, default):
     return json.loads(Path(p).read_text(encoding="utf-8")) if Path(p).exists() else default
 
@@ -313,7 +375,7 @@ def _write_json(p, data):
 
 
 STEPS = {"capture": capture, "audit": audit, "registry": merge_registry, "teaching": teaching,
-         "exercises": exercises, "visuals": visuals}
+         "exercises": exercises, "visuals": visuals, "videos": videos}
 
 
 def run_lecture(cfg, module, part, number, steps, runner_name="claude", log=print):

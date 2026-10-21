@@ -46,15 +46,17 @@ def _index(module, parts):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>{module.name} revision</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
 <link rel="stylesheet" href="{slug(parts[0])}/css/site.css">
 </head>
 <body>
-<main class="read">
+<main class="read" style="margin: 0 auto">
   <h1>{module.name}</h1>
   <p class="lede">{module.code}. Pick a part.</p>
-  <ul class="ui">
+  <ol class="map ui">
 {links}
-  </ul>
+  </ol>
 </main>
 </body>
 </html>

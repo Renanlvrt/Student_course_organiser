@@ -43,6 +43,11 @@ def claude_headroom(cfg):
     """(ok, message) from the last rate_limit_event seen."""
     u = last_usage(cfg).get("claude", {})
     five, week = u.get("five_hour"), u.get("seven_day")
+    age = (datetime.now() - datetime.fromisoformat(u["seen"])).total_seconds() / 3600 if u.get("seen") else 0
+    if age >= 5:                       # that 5-hour window has reset since the reading
+        five = None
+    if age >= 24 * 7:
+        week = None
     if five is None:
         return True, "Claude usage unknown (no run yet)"
     msg = f"Claude: 5-hour {five:.0%}, week {week:.0%}"
@@ -107,7 +112,7 @@ def run_agy(cfg, prompt, model=None, add_dirs=(), cwd=None, timeout=1800, **_):
     return out, usage
 
 
-VISUAL_STEPS = {"visuals"}     # Claude builds visuals / sandboxes / videos; agy (Google quota) does the rest
+VISUAL_STEPS = {"visuals", "videos"}     # Claude builds visuals / sandboxes / videos; agy (Google quota) does the rest
 
 
 def pick(runner, step=None):

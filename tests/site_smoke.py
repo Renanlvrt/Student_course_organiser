@@ -64,11 +64,12 @@ def main():
               "lectures": [{"id": "L01", "title": "Lecture 01 - Basics", "concepts": ["L01.xor"]}]}
     (site / "data/course.js").write_text("window.COURSE = " + json.dumps(course) + ";", encoding="utf-8")
     lec = {"id": "L01", "title": "Lecture 01 - Basics", "concepts": [CONCEPT], "teaching": [TEACH], "exercises": EXERCISES,
-           "plan": [{"id": "L01.xor", "teach": "all"}], "master": "### p.3: XOR\n\nDefinition of $\\oplus$. [src: Lecture 01 p.3]"}
+           "plan": [{"id": "L01.xor", "teach": "all"}], "videos": [{"concept": "L01.xor", "title": "XOR undoes itself", "file": "videos/L01_xor.mp4"}],
+           "master": "### p.3: XOR\n\nDefinition of $\\oplus$. [src: Lecture 01 p.3]"}
     (site / "data/L01.js").write_text("window.LECTURES = window.LECTURES || {}; window.LECTURES.L01 = " + json.dumps(lec) + ";", encoding="utf-8")
     (site / "visuals/L01.js").write_text(VISUAL, encoding="utf-8")
     checks = [
-        ("lecture.html?id=L01", ["XOR of bit strings", "Next step", "XOR playground", "Solved.", "katex", "light switch", "Quick check"]),
+        ("lecture.html?id=L01", ["XOR of bit strings", "Next step", "XOR playground", "Solved.", "katex", "light switch", "Quick check", "Short film: XOR undoes itself"]),
         ("lecture.html?id=L01&tab=practice", ["Ask Claude to mark it", "3 exercises"]),
         ("index.html", ["0 of 1 concepts mastered", "3 exercises in the gym"]),
         ("practice.html?tab=recall", ["Show answer"]),

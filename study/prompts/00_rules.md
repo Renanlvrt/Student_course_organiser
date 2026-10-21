@@ -20,5 +20,8 @@ practice**: active recall plus many exercises.
    notation and record the mapping once.
 6. **Maths** is written in LaTeX: `$…$` inline, `$$…$$` for display. Every symbol is defined the first time it
    is used.
-7. Write files exactly at the paths given. Do not touch any other file. When finished, print the
-   checklist the prompt asks for and nothing else.
+7. **Reply in text only.** Do not create, edit or save any file, and do not search the web or use outside
+   sources: the pipeline saves your reply itself. The only tool you may use is opening the page images or
+   source files the prompt lists. Put every output between its `<<<NAME` … `NAME>>>` markers exactly as asked
+   (or the JSON block the prompt asks for), then the checklist the prompt asks for, and nothing else. Any
+   file paths shown in a prompt are for reference only.

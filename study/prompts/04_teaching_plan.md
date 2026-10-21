@@ -38,8 +38,11 @@ boundaries) and LaTeX for maths. Every concept gets **≥ 3 cards**, with at lea
   numbers shown must be correct.
 - Set `hero_visual: true` on the 2–3 concepts per *part* that are most structural (constructions, protocols,
   pipelines). These are rendered later with the `anatomy` skill as a working machine.
-- Set `video` to a short storyboard **only** for a proof or derivation that a narrated video explains better
-  than an interaction (Manim, optional).
+- Set `video` on the **1–3 concepts per lecture** that a short film explains best: a proof, a derivation, an
+  algorithm running, an attack unfolding. It is a storyboard for a **30–60 second** silent Manim video with
+  on-screen captions: `{"title": "...", "shots": ["shot 1: what is on screen and what moves, caption text", ...]}`
+  (4–8 shots). It must add something the interactive animation does not (e.g. the whole argument end to end).
+  Every other concept keeps `video: null`.
 
 At the end, print the concept ids with their animation and sandbox titles, and confirm the count equals the number of concepts in the inventory.
 
