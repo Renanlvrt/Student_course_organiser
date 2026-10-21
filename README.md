@@ -35,6 +35,13 @@ From then on, every Blackboard download is tagged with its course code and folde
 On a course page, click the extension icon, tick sections, **Scan**, then **Download N new files**.
 Files download one at a time, and files you already have are skipped.
 
+## Always on
+- The organiser starts at every Windows login (Startup shortcut, `scripts\install_startup.ps1`) and lives in the tray.
+- If it isn't running when you use the extension (it crashed, or you quit it), the extension starts it
+  automatically through a small native launcher (`scripts\install_native_host.ps1`, already installed). This
+  happens when Chrome starts, when you open the popup, before every download is sorted and before retries.
+- The extension has a fixed ID (`extension\EXTENSION_ID.txt`) so the launcher keeps trusting it.
+
 ## Setup / maintenance
 - Install the dependencies with `python -m pip install -r requirements.txt`.
 - The AI key goes in the Windows user environment variable `GEMINI_API_KEY`. It is never stored in files.

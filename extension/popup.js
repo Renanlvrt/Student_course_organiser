@@ -23,7 +23,13 @@ function send(msg) {
 }
 
 async function init() {
-  const status = await appStatus();
+  let status = await appStatus();
+  if (!status) {                              // not running: start it, then carry on
+    $("app").textContent = "Starting the organiser…";
+    $("content").innerHTML = `<div class="muted">Starting the organiser…</div>`;
+    await chrome.runtime.sendMessage({ type: "ensureApp" });
+    status = await appStatus();
+  }
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try {
     info = await send({ type: "listSections" });

@@ -1,19 +1,32 @@
 {
   "manifest_version": 3,
   "name": "Alt+O Blackboard Helper",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Tags Blackboard downloads with course + section for the Alt+O organiser, and downloads new files in a section.",
-  "permissions": ["downloads", "storage", "tabs"],
+  "permissions": [
+    "downloads",
+    "storage",
+    "tabs",
+    "nativeMessaging"
+  ],
   "host_permissions": [
     "https://*.durham.ac.uk/*",
     "https://*.blackboard.com/*",
     "http://127.0.0.1:47821/*"
   ],
-  "background": { "service_worker": "background.js" },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["https://*.durham.ac.uk/*", "https://*.blackboard.com/*"],
-      "js": ["bbparse.js", "content.js"],
+      "matches": [
+        "https://*.durham.ac.uk/*",
+        "https://*.blackboard.com/*"
+      ],
+      "js": [
+        "bbparse.js",
+        "content.js"
+      ],
       "all_frames": true,
       "run_at": "document_idle"
     }
@@ -21,7 +34,16 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Alt+O Blackboard Helper",
-    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
   },
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0ZVz/PPsMQ41WTFrKyS85p55GDwKrfIKzLmclYRREHLEbOgNpEPtLhIM+hEF6WGz6Cv24npS4CdDNyKyZH8fHF1ViOnMpvFygpCa9wUEZztTF8dOcECdCSb55gdnCo7MTW//xi4Lc1191ll+jvUiN3iwDXQhjMXo0qgRo00BAbW5JE/vQ43V9bbJQkzBZZzthu4RhcqcCV/YF0JX1B8vRO4s97c1dj2ZHUk9PWtdfuJMwfPI8Bkt5AI0f5NuVVIP0+14vl4nGCAKP3z16thHde1b4/RfoaCL1YGQM/UMUH31ER8Eyes7qD//dfRZrxcWsAPKGp1A4q76zXad9/MK0wIDAQAB"
 }

@@ -10,6 +10,32 @@ const local = chrome.storage.local;
 
 const isBB = (url) => { try { return BB_HOST.test(new URL(url).hostname); } catch (e) { return false; } };
 
+// ---- keep the organiser app running ---------------------------------------------------
+// If it is not running (after a reboot before login items ran, a crash, or Quit), start it through the
+// native-messaging launcher registered by scripts/install_native_host.ps1.
+async function appUp() {
+  try { return (await fetch(APP + "/status")).ok; } catch (e) { return false; }
+}
+
+let starting = null;
+function ensureApp() {
+  if (!starting) {
+    starting = (async () => {
+      if (await appUp()) return true;
+      try { await chrome.runtime.sendNativeMessage("com.alto.organiser", { cmd: "start" }); } catch (e) { /* not installed */ }
+      for (let i = 0; i < 40; i++) {
+        if (await appUp()) return true;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return false;
+    })().finally(() => { setTimeout(() => { starting = null; }, 1000); });
+  }
+  return starting;
+}
+
+chrome.runtime.onStartup.addListener(() => { ensureApp(); });
+chrome.runtime.onInstalled.addListener(() => { ensureApp(); });
+
 async function getS(key, dflt) { const r = await session.get(key); return r[key] ?? dflt; }
 async function setS(key, val) { await session.set({ [key]: val }); }
 
@@ -24,6 +50,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await setS("clicks", clicks);
     })();
     return false;
+  }
+  if (msg.type === "ensureApp") {
+    ensureApp().then((ok) => reply({ ok }));
+    return true;
   }
   if (msg.type === "startQueue") {
     startQueue(msg.files).then(() => reply({ ok: true }));
@@ -110,6 +140,7 @@ chrome.downloads.onChanged.addListener(async (delta) => {
   if (ctx && state === "complete") {
     const [item] = await chrome.downloads.search({ id: delta.id });
     if (item) {
+      await ensureApp();                      // the organiser sorts files already sitting in Downloads
       try {
         await fetch(APP + "/context", {
           method: "POST",
@@ -161,6 +192,7 @@ async function failed(q, reason) {
     setTimeout(nextInQueue, 2500 * f.attempts);
     return;
   }
+  await ensureApp();
   try {
     const r = await (await fetch(APP + "/fetch", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -191,6 +223,7 @@ async function openRecap(q) {
 }
 
 async function startQueue(files) {
+  await ensureApp();
   await setS("queue", { files, index: 0, running: true, currentId: null, failed: 0, done: [] });
   nextInQueue();
 }
