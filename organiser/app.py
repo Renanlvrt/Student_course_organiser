@@ -41,6 +41,7 @@ class App:
         self.tray = Tray(self.uiq, self.cfg.hotkey)
         self.core.notify = self.toast
         self.core.on_tagged = lambda e: self.uiq.put(("tagged",))
+        self.core.on_show = lambda: self.uiq.put(("show",))
         self.core.state_listeners.append(lambda: self.uiq.put(("state",)))
         self.core.log.listeners.append(lambda e: self.uiq.put(("entry",)))
         self.core.start()
@@ -57,6 +58,7 @@ class App:
         self.hotkey = Hotkey(self.cfg.hotkey, lambda: self.uiq.put(("toggle",)))
         try:
             mode = self.hotkey.start()
+            self.core.hotkey_mode = mode
             log.info("Hotkey %s: %s", self.cfg.hotkey, mode)
         except Exception:
             log.exception("Could not register hotkey %s", self.cfg.hotkey)

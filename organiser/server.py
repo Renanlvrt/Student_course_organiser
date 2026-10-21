@@ -1,6 +1,7 @@
 """Localhost endpoint for the Chrome extension. Binding the port doubles as the single-instance lock."""
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -59,9 +60,20 @@ def make_server(core, port):
             if not self._allowed():
                 return self._send(403, {"error": "origin"})
             if self.path.startswith("/status"):
-                core.extension_seen = time.time()
-                return self._send(200, {"app": "alt-o-organiser", "active": core.active,
-                                        "module": core.pick_module})
+                if self.headers.get("Origin", "").startswith("chrome-extension://"):
+                    core.extension_seen = time.time()
+                from . import ai
+                last = core.log.entries[-1] if core.log.entries else None
+                return self._send(200, {"app": "alt-o-organiser", "active": core.active, "module": core.pick_module,
+                                        "pid": os.getpid(), "started_at": core.started_at,
+                                        "extension_seen": core.extension_seen or None,
+                                        "hotkey": core.cfg.hotkey, "hotkey_mode": core.hotkey_mode,
+                                        "ai_key": ai.available(), "ai_last": dict(ai.LAST),
+                                        "last_entry": last and {"time": last["time"], "name": last["original_name"],
+                                                                "status": last["status"]},
+                                        "root": str(core.cfg.root_folder), "downloads": str(core.cfg.downloads_folder)})
+            if self.path.startswith("/selftest"):
+                return self._send(200, _selftest(core))
             if self.path.startswith("/recent"):
                 return self._send(200, {"entries": [_entry_view(core, e) for e in core.log.recent(80)]})
             if self.path.startswith("/taxonomy"):
@@ -130,6 +142,9 @@ def make_server(core, port):
                 if not r or r.get("status") == "failed":
                     return self._send(200, {"ok": False, "error": box.get("err") or (r or {}).get("message", "failed")})
                 return self._send(200, {"ok": True, "entry": _entry_view(core, r)})
+            if self.path == "/show":
+                core.on_show()
+                return self._send(200, {"ok": True})
             if self.path == "/undo":
                 done, box = threading.Event(), {}
 
@@ -181,3 +196,29 @@ def _entry_view(core, e):
             "rel": rel, "status": e.get("status"), "message": e.get("message", ""),
             "where": core.short_dest(cur), "module": c.get("module"), "part": c.get("part"),
             "category": c.get("category"), "number": c.get("number"), "topic": c.get("topic")}
+
+
+def _selftest(core):
+    """Can THIS process (pythonw) create, move and delete files where it needs to? Antivirus
+    'ransomware shields' silently block exactly this for untrusted programs."""
+    import uuid
+    from pathlib import Path
+    out = {}
+    for label, folder in (("courses", core.cfg.root_folder / "_Unsorted"), ("downloads", core.cfg.downloads_folder)):
+        name = f".organiser-selftest-{uuid.uuid4().hex[:8]}.tmp"
+        a, b = Path(folder) / name, Path(folder) / (name + "2")
+        try:
+            core.suppress(a)
+            core.suppress(b)
+            a.write_bytes(b"selftest")
+            os.replace(a, b)
+            os.remove(b)
+            out[label] = {"ok": True}
+        except Exception as ex:
+            out[label] = {"ok": False, "error": f"{type(ex).__name__}: {ex}"[:200]}
+            for p in (a, b):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+    return out

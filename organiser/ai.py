@@ -8,6 +8,7 @@ from .config import gemini_key
 log = logging.getLogger("organiser.ai")
 
 _client = None
+LAST = {"ok_at": None, "error": None, "error_at": None, "model": None}   # shown in the status window
 _cooldown = {}   # model -> time until which it is skipped (daily quota used up)
 
 
@@ -101,10 +102,12 @@ def classify(cfg, filename, text, known=None):
             try:
                 resp = client.models.generate_content(model=model, contents=prompt, config=conf)
                 data = json.loads(resp.text)
+                LAST.update(ok_at=time.time(), model=model, error=None)
                 return _normalise(cfg, data)
             except Exception as e:
                 msg = str(e)
                 log.warning("Gemini %s attempt %d failed: %s", model, attempt + 1, msg[:300])
+                LAST.update(error=msg[:160], error_at=time.time())
                 if "quota" in msg.lower():
                     _cooldown[model] = time.time() + 15 * 60   # quota gone: skip this model for a while
                     break

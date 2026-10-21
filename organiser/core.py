@@ -62,6 +62,9 @@ class Organiser:
         self.state_listeners = []
         self.notify = lambda title, msg: None
         self.on_tagged = lambda entry: None
+        self.on_show = lambda: None
+        self.hotkey_mode = None
+        self.started_at = time.time()
         self._observer = None
         self._pending = {}
         self._pending_lock = threading.Lock()
