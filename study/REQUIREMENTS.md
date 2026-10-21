@@ -125,4 +125,18 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   sandbox and at least one exercise. A checker script verifies this.
 
 ## Still to come from me
-- My newer prompt (to merge into the pipeline prompts).
+- ~~My newer prompt~~ → given in round 3, merged into `study/prompts/`.
+- Should written/proof answers also get a revealable model answer? (not chosen in round 2; only Ask-Claude marks them)
+
+## Round 3 (2026-10-21): the old prompts, and what the new ones must do better
+- The 3 old prompts were given (reading PDFs → learning plan, website, 5×15 mock questions). They are outdated.
+  The new chain is in `study/prompts/`.
+- **The most important rule: don't miss a single piece of information from the lectures. Not a SINGLE one.**
+  Work page by page and one lecture at a time, so nothing is forgotten.
+- Visualisers and interactive elements for every concept: I'm a visual learner and need to learn every concept
+  as efficiently as possible.
+- Practice with **active recall** and **MANY exercises**.
+- **Coursework modules (e.g. Deep Learning):** keep a **tracked knowledge file** that can be given to an AI.
+  It holds everything from every lecture, concept and additional reading, so the AI is as good as it can be.
+  → `09_knowledge_file.md`, with a manifest of sources and hashes for incremental updates.
+- **Install the visualisation/interactive skills** (done, see `study/prompts/README.md`).
