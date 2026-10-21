@@ -156,3 +156,12 @@ This is a record of what I asked for. Open questions are at the bottom and are f
 - Antigravity works interactively for me ("Reply Ok" → "Ok"). **Go ahead with implementation.**
 - Headless `agy -p` still never starts a turn (3 attempts, 0 events). Gemini CLI needs a one-time
   browser login (`gemini`). Until one of them works headless, the pipeline runs every step with Claude Code.
+
+## Build status (2026-10-21 evening)
+- Built: `python -m study convert | fix | mapnotes | lecture | site | check`, plus a site shell rendered from data
+  (white, teal / amber / blue / red / green, no purple). The headless smoke test passes 4/4.
+- Crypto: 7 PDFs converted. 48/63 flagged notes pages fixed (very good quality: exact LaTeX, figures
+  described, the lecturer's typos flagged).
+- **Cost finding:** on Claude Code (Sonnet), one 4-page fix batch uses about 3% of the 5-hour window, and that
+  window is shared with my interactive Claude sessions. The automatic stop at 85% worked. → Bulk steps
+  (1, 1b, 2, 9) must run on Google's quota (Gemini CLI or agy), with Claude for site visuals only.
