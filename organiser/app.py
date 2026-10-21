@@ -112,6 +112,8 @@ class App:
             self.open_sort_existing()
         elif kind == "migration":
             self.open_migration()
+        elif kind == "status_window":
+            self.open_status_window()
         elif kind == "open_root":
             os.startfile(str(self.cfg.root_folder))
         elif kind == "open_log":
@@ -143,6 +145,15 @@ class App:
     def toast(self, title, msg):
         if hasattr(self, "tray"):
             self.tray.notify(title, msg)
+
+    def open_status_window(self):
+        from pathlib import Path
+        import subprocess
+        lnk = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Automation Status.lnk"
+        if lnk.exists():
+            subprocess.Popen(["explorer.exe", str(lnk)])
+        else:
+            os.startfile(str(Path(__file__).resolve().parent.parent / "status.pyw"))
 
     def open_sort_existing(self):
         from .ui import PreviewWindow

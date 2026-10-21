@@ -46,6 +46,7 @@ Files download one at a time, and files you already have are skipped.
 - Install the dependencies with `python -m pip install -r requirements.txt`.
 - The AI key goes in the Windows user environment variable `GEMINI_API_KEY`. It is never stored in files.
 - Run `powershell -File scripts\install_startup.ps1` to start at login (or `uninstall_startup.ps1` to stop).
+- **Automation Status**: Ctrl+Alt+O, the Desktop shortcut, Start menu ("Automation"), the tray menu or the dashboard ⋯ menu.
 - Run it by hand with `pythonw run.pyw`, or `python run.pyw` to see logs in the console.
 - Settings live in `config.json`: folders, hotkey, modules, keywords, confidence threshold and Gemini model.
   Next year, edit the `modules` list there.

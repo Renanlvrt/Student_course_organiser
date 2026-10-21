@@ -572,6 +572,7 @@ class Dashboard:
         m.add_command(label="Reorganise old course folders…", command=self.app.open_migration)
         m.add_separator()
         m.add_command(label="Expand all", command=lambda: (self.collapsed.clear(), self.refresh()))
+        m.add_command(label="Automation Status…  (Ctrl+Alt+O)", command=self.app.open_status_window)
         m.add_command(label="Open courses folder", command=lambda: os.startfile(str(self.cfg.root_folder)))
         m.add_command(label="Open _Unsorted", command=lambda: os.startfile(str(self.cfg.unsorted_dir)))
         m.add_separator()

@@ -332,5 +332,17 @@ class StatusWindow:
             pass
 
 
+def bring_existing_to_front():
+    """Already open? Show that window instead of opening a second one."""
+    u = ctypes.windll.user32
+    h = u.FindWindowW(None, "Automation Status")
+    if not h:
+        return False
+    u.ShowWindow(h, 9)            # SW_RESTORE
+    u.SetForegroundWindow(h)
+    return True
+
+
 if __name__ == "__main__":
-    StatusWindow()
+    if not bring_existing_to_front():
+        StatusWindow()

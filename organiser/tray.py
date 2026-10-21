@@ -28,6 +28,7 @@ class Tray:
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Sort files already in Downloads…", put("sort_existing")),
                 pystray.MenuItem("Reorganise old course folders…", put("migration")),
+                pystray.MenuItem("Automation Status (Ctrl+Alt+O)", put("status_window")),
                 pystray.MenuItem("Open courses folder", put("open_root")),
                 pystray.MenuItem("Open log", put("open_log")),
                 pystray.Menu.SEPARATOR,
