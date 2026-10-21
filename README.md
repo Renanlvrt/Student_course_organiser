@@ -11,10 +11,10 @@ Full decisions: [SPEC.md](SPEC.md).
    - Hover over a sorted file to see **move · undo**. You can also drag a row; module and type targets appear while you drag.
 3. Downloads started from the Chrome extension are sorted even when Alt+O is off. When a batch finishes, a **recap** tab opens with a tree of where each file went. Drag a file onto another folder to move it, or hover and click **move** / **undo**.
 
-**Duplicates:** if you already have the exact same file in the right place (or the folder next to it), the new
-download goes to `Durham2\Bin\organiser-duplicates`. If your only copy is somewhere else (old folders, wrong module,
-`_Unsorted`), the new download is sorted into the right place and the stray copy goes to the Bin. You always end
-up with one copy, in the right folder. Nothing is ever deleted.
+**Duplicates** (byte-for-byte identical files): if you already have the file in the right place (or the folder
+next to it), the extra download is removed. If your only copy is somewhere else (old folders, wrong module,
+`_Unsorted`), the file is sorted into the right place and the stray copy is removed. You always end up with exactly
+one copy, in the right folder. No Bin folder.
 
 **Notebooks:** Colab/GitHub links are resolved to the real `.ipynb`. Notebooks linked inside slides and practical
 PDFs are downloaded too. Every notebook gets a printable PDF copy next to it. Code linked from a lecture goes to the

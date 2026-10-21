@@ -187,9 +187,9 @@ def main(work=None):
     shutil.copy(e7["current_path"], downloads / "slides (1).pdf.tmpcopy")
     os.replace(downloads / "slides (1).pdf.tmpcopy", downloads / "slides (1).pdf")
     e8 = wait_for(lambda: latest(core, "slides (1).pdf"))
-    check("8 re-download of a file already in its right place -> discarded to Bin (one copy kept)",
+    check("8 re-download of a file already in its right place -> extra copy removed, original kept",
           e8 and e8["status"] == "duplicate" and not (downloads / "slides (1).pdf").exists()
-          and Path(e8["current_path"]).parent.name == "organiser-duplicates" and Path(e7["current_path"]).exists())
+          and Path(e7["current_path"]).exists() and not (work / "Bin").exists())
 
     # practical bundle: code first, then sheet ---------------------------
     core.set_pick("DLCV", 0)
@@ -268,7 +268,7 @@ def main(work=None):
     shutil.copy(old / "dl-lecture1.pdf", downloads / "dl-lecture1.pdf.tmpcopy")
     os.replace(downloads / "dl-lecture1.pdf.tmpcopy", downloads / "dl-lecture1.pdf")
     eo = wait_for(lambda: latest(core, "dl-lecture1.pdf"), 90)
-    check("15 'already have it' in an old folder -> sorted into the new layout, stray copy to Bin",
+    check("15 'already have it' in an old folder -> sorted into the new layout, stray copy removed",
           eo and eo["status"] == "sorted" and rel(cfg, eo["current_path"]).startswith("DLCV/Lectures/Deep Learning/Lecture 01")
           and not (old / "dl-lecture1.pdf").exists(), eo and rel(cfg, eo["current_path"]))
 
@@ -286,9 +286,9 @@ def main(work=None):
     shutil.copy(wrong, downloads / "crypto5.tmpcopy")
     os.replace(downloads / "crypto5.tmpcopy", downloads / "crypto5.pdf")
     ew = wait_for(lambda: latest(core, "crypto5.pdf"), 90)
-    check("15b copy in the wrong place -> file sorted correctly, wrong copy moved to Bin",
+    check("15b copy in the wrong place -> file sorted correctly, wrong copy removed (no Bin)",
           ew and ew["status"] == "sorted" and rel(cfg, ew["current_path"]).startswith("Crypto/Lectures/Symmetric Cryptography/Lecture 05")
-          and not wrong.exists(), ew and rel(cfg, ew["current_path"]))
+          and not wrong.exists() and not (work / "Bin").exists(), ew and rel(cfg, ew["current_path"]))
 
     # notebook linked from a lecture line goes to the practical on the same topic --------
     pdir = root / "DLCV" / "Practicals" / "Deep Learning" / "Practical 04 - Designing Architectures"

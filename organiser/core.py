@@ -334,18 +334,18 @@ class Organiser:
                      manual_part=pick[1], error=error, when=when)
         dup = None if src.is_dir() else self.dups.find(src)
         if dup:
+            # dups.find matched by content hash, so the two files are byte-for-byte identical.
             if self._already_in_place(dup, c, src):
+                self._remove_identical(src, dup)  # the extra copy adds nothing
                 if kind == "fetched":
-                    src.unlink(missing_ok=True)   # our own background fetch of something we already have
                     return None
-                binned = self._to_bin(src)        # discard the new copy (kept in Bin, never deleted)
-                e = self.log.add(kind=kind, status="duplicate", original_path=str(src), current_path=str(binned),
+                e = self.log.add(kind=kind, status="duplicate", original_path=str(src), current_path="",
                                  duplicate_of=dup, original_name=src.name, classification=c.to_dict(),
-                                 context=ctx, message=f"Already in {self.short_dest(dup)}")
+                                 context=ctx, message=f"Already in {self.short_dest(dup)} - extra copy removed")
                 self.notify("Already have it", f"{src.name}\nin {self.short_dest(dup)}")
                 return e
-            # We have it, but in the wrong place: this copy goes to the right folder, the stray one to the Bin.
-            self._retire_stray(dup)
+            # We have it, but in the wrong place: this copy goes to the right folder, the stray one is removed.
+            self._retire_stray(dup, src)
         if c.not_course and not pick[0] and not ctx:
             return self.log.add(kind=kind, status="skipped", original_path=str(src), current_path=str(src),
                                 original_name=src.name, classification=c.to_dict(), text=text[:3000],
@@ -375,21 +375,22 @@ class Organiser:
         return next((e for e in reversed(self.log.entries)
                      if norm(e.get("current_path", "")) == norm(path) and e["status"] in ("sorted", "flagged")), None)
 
-    def _to_bin(self, path):
-        bin_dir = self.cfg.root_folder.parent / "Bin" / "organiser-duplicates"
-        bin_dir.mkdir(parents=True, exist_ok=True)
+    def _remove_identical(self, path, twin):
+        """Delete path only if it really is byte-identical to twin (re-checked here)."""
+        if placer.file_hash(path) != placer.file_hash(twin):
+            raise RuntimeError(f"refusing to remove {path}: not identical to {twin}")
         self.dups.remove(path)
-        return placer.move(path, bin_dir / Path(path).name)
+        os.remove(path)
 
-    def _retire_stray(self, dup):
+    def _retire_stray(self, dup, src):
         owner = self._owner(dup)
         old_parent = Path(dup).parent
-        binned = self._to_bin(dup)
+        self._remove_identical(dup, src)
         placer.remove_if_empty_practical(old_parent)
         if owner:
-            self.log.update(owner["id"], status="duplicate", current_path=str(binned),
-                            message="Wrong place: newer copy sorted, this one moved to Bin")
-        log.info("stray duplicate %s moved to Bin", dup)
+            self.log.update(owner["id"], status="duplicate", current_path="",
+                            message="Was in the wrong place: removed, the same file is now sorted correctly")
+        log.info("stray duplicate %s removed (identical copy sorted correctly)", dup)
 
     def _repair_notebook(self, src, ctx):
         """A '.ipynb' that is really a Colab web page: fetch the real notebook instead."""
@@ -400,12 +401,9 @@ class Organiser:
             return src
         try:
             good = notebooks.fetch(raw, src.parent, name=src.stem + ".nb-download.tmp")
-            junk_dir = self.cfg.root_folder.parent / "Bin" / "organiser-replaced"
-            junk_dir.mkdir(parents=True, exist_ok=True)
             final = src
             self.suppress(src)
-            placer.move(src, junk_dir / src.name)
-            os.replace(good, final)
+            os.replace(good, final)               # the Colab web page is junk: replace it with the notebook
             log.info("replaced Colab page %s with the real notebook", src.name)
             return final
         except Exception as ex:
