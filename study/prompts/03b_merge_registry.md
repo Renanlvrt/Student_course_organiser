@@ -37,7 +37,9 @@ This step makes the site **scalable**. New lectures add to it, and nothing is ex
    complete.
 
 ## Output
-- The updated `{{REGISTRY_JSON}}`.
+Emit three blocks: `<<<REGISTRY` … `REGISTRY>>>` (the full updated registry), `<<<PLAN` … `PLAN>>>` and
+`<<<BACKLINKS` … `BACKLINKS>>>`:
+- The updated registry.
 - `{{OUT_DIR}}/{{LECTURE_STEM}} - plan.json`: for each concept of this lecture, `teach: all | aspects:[…] | recap`.
   Steps 4, 5 and 7 build **only** what the plan says. Exercises are still written for every concept the
   lecture touches, so practice keeps mixing old and new.
@@ -45,3 +47,12 @@ This step makes the site **scalable**. New lectures add to it, and nothing is ex
   in full in…" link added. Step 7 applies them.
 
 Print a table: `concept | before (depth) | now (depth) | action`.
+
+## Current registry
+{{REGISTRY}}
+
+## New lecture `{{LECTURE_ID}}`: concept inventory
+{{CONCEPTS}}
+
+## New lecture: master notes
+{{MASTER}}

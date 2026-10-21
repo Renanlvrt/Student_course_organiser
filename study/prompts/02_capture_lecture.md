@@ -8,7 +8,7 @@
 - Readings attached to this lecture: {{READING_MD_FILES}}
 - The concept inventory of previous lectures (for links, not for re-capturing): {{PREVIOUS_CONCEPTS_JSON}}
 
-## Task A: Master notes → `{{OUT_DIR}}/{{LECTURE_STEM}} - Master.md`
+## Task A: Master notes
 Go through **every page of every source in order**. For each page, write a section
 `### p.N: <slide title or first line>` that contains **everything** on that page, rewritten as clear notes:
 - Definitions in a `**Definition (name).**` block, theorems and lemmas likewise, then the proof steps in
@@ -24,8 +24,8 @@ sources. When sources disagree, keep both and add `> ⚠ Check:`.
 At the end, add a **"Connections"** section: which earlier concepts this lecture relies on, and which ones it
 extends.
 
-## Task B: Concept inventory → `{{OUT_DIR}}/{{LECTURE_STEM}} - concepts.json`
-A JSON array. One object per **atomic** concept (one idea a student could be examined on). Split compound
+## Task B: Concept inventory
+A JSON array. Concept ids are prefixed with the lecture id `{{LECTURE_ID}}`. One object per **atomic** concept (one idea a student could be examined on). Split compound
 ideas: "OTP" is not one concept. Its definition, perfect secrecy proof, key-reuse attack and key-length bound
 are four.
 ```json
@@ -34,7 +34,21 @@ are four.
  "examinable_signals": ["stated as 'important'", "has worked example", "appears in practical 2"]}
 ```
 
+## Output format (exactly)
+```
+<<<MASTER_MD
+...the complete master notes...
+MASTER_MD>>>
+<<<JSON
+[...the concept inventory...]
+JSON>>>
+```
+Then the self-audit table.
+
 ## Task C: Self-audit (do not skip)
 Re-read each source page and tick it against the notes. Then print exactly this table and nothing else:
 `page | items on page | items captured | missing (list)`. Every row must have *missing* empty. If not, fix
-the notes and reprint the table.
+the notes before emitting them.
+
+## Sources
+{{SOURCES}}

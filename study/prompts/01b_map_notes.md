@@ -10,9 +10,11 @@ audit.
 - Notes markdown, with `<!-- page N -->` markers: `{{NOTES_MD}}` (pages 1..{{NOTES_PAGES}})
 - The slide titles of every lecture (first heading of each page): {{LECTURE_OUTLINES}}
 
-## Output → `{{OUT_DIR}}/notes-map.json`
+## Output
+Lecture ids are `<Part>:LNN`, e.g. `Symmetric Cryptography:L02` (the notes may cover several parts).
+Reply with the map between the markers `<<<JSON` and `JSON>>>`:
 ```json
-{"pages": {"1": "front", "2": "L01", "3": "L01", "14": ["L02", "L03"], "60": "unassigned"},
+{"pages": {"1": "front", "2": "Symmetric Cryptography:L01", "14": ["Symmetric Cryptography:L02", "Symmetric Cryptography:L03"], "60": "unassigned"},
  "unassigned_reason": {"60": "topic not in any lecture so far (likely a future lecture)"}}
 ```
 - Every page from 1 to {{NOTES_PAGES}} appears **exactly once** as a key. A page that spans two lectures

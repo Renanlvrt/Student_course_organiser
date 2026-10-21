@@ -16,6 +16,20 @@ def main(argv=None):
     f.add_argument("--runner", default="claude", choices=["claude", "agy"])
     f.add_argument("--model", default="sonnet")
     f.add_argument("--limit", type=int, help="stop after this many model calls")
+    n = sub.add_parser("mapnotes", help="Step 1b: assign every page of module-wide notes to a lecture")
+    n.add_argument("module")
+    lec = sub.add_parser("lecture", help="Steps 2, 3, 3b for one lecture")
+    lec.add_argument("module")
+    lec.add_argument("part")
+    lec.add_argument("number", type=int)
+    lec.add_argument("--steps", default="capture,audit,registry,teaching,exercises,visuals")
+    lec.add_argument("--runner", default="claude", choices=["claude", "agy"])
+    st = sub.add_parser("site", help="Build Website/<Part>/ from the pipeline output")
+    st.add_argument("module")
+    st.add_argument("part")
+    ck = sub.add_parser("check", help="Coverage check: is every concept fully built?")
+    ck.add_argument("module")
+    ck.add_argument("part")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -28,6 +42,18 @@ def main(argv=None):
     elif args.cmd == "fix":
         from .fix_pages import fix_module
         print(f"{fix_module(cfg, module, args.runner, args.model, args.limit)} model call(s)")
+    elif args.cmd == "mapnotes":
+        from .lecture import map_notes
+        map_notes(cfg, module)
+    elif args.cmd == "lecture":
+        from .lecture import run_lecture
+        run_lecture(cfg, module, args.part, args.number, args.steps.split(","), args.runner)
+    elif args.cmd == "site":
+        from .site import build_site
+        build_site(cfg, module, args.part)
+    elif args.cmd == "check":
+        from .check import check_part
+        sys.exit(1 if check_part(cfg, module, args.part) else 0)
 
 
 if __name__ == "__main__":

@@ -10,13 +10,14 @@
   lengths and what earns marks.
 - Concepts the module says are **not examined**: {{NOT_EXAMINED}}
 
-## Output → `{{OUT_DIR}}/{{LECTURE_STEM}} - exercises.json`
-A JSON array of exercises:
+## Output
+A JSON array of exercises between `<<<JSON` and `JSON>>>`:
 ```json
 {"id": "L03.ex.017", "concepts": ["L03.lfsr"], "layer": "practical|drill|exam|transfer|interleaved",
  "difficulty": 1-5, "format": "mcq|numeric|short|compute|proof|explain|design|attack|code",
  "question": "markdown+LaTeX", "given": "data/values if any",
- "check": {"type": "exact|numeric|mcq|set|regex|none", "answer": "...", "tolerance": 0},
+ "options": ["only for mcq: the choices, markdown+LaTeX"],
+ "check": {"type": "exact|numeric|mcq|set|regex|none", "answer": "for mcq: the 0-based index of the right option", "tolerance": 0},
  "hints": ["nudge 1 (strategy)", "nudge 2 (first step)"],
  "solution": "complete worked solution, every step justified",
  "strategy": "how to recognise this type of question and the general method to attack it",
@@ -44,3 +45,21 @@ ideas keep being practised.
 ## Final self-check
 Print `concept id | drill | exam | transfer` counts, the number of practical questions included compared
 with the number on the sheets, and `answer keys recomputed: yes`.
+
+## Plan (step 3b)
+{{PLAN}}
+
+## Concept inventory
+{{CONCEPTS}}
+
+## Teaching design
+{{TEACHING}}
+
+## Master notes
+{{MASTER}}
+
+## Practical sheets
+{{PRACTICALS}}
+
+## Exam profile
+{{EXAM_PROFILE}}

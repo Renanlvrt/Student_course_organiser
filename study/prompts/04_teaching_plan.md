@@ -6,8 +6,8 @@
 Follow `{{PLAN_JSON}}` (step 3b): `all` = full treatment; `aspects:[…]` = teach only those aspects and link to the
 concept's home section for the rest; `recap` = only a short recap card + link (no animation/sandbox needed).
 
-Design **how each concept will be taught**, before any HTML is written. Output
-`{{OUT_DIR}}/{{LECTURE_STEM}} - teaching.json`, with one entry per concept id (every id, none skipped):
+Design **how each concept will be taught**, before any HTML is written. Emit a JSON array between `<<<JSON` and
+`JSON>>>`, with one entry per concept id (every id, none skipped):
 
 ```json
 {"id": "L03.lfsr",
@@ -42,3 +42,12 @@ boundaries) and LaTeX for maths. Every concept gets **≥ 3 cards**, with at lea
   than an interaction (Manim, optional).
 
 At the end, print the concept ids with their animation and sandbox titles, and confirm the count equals the number of concepts in the inventory.
+
+## Plan (step 3b)
+{{PLAN}}
+
+## Concept inventory
+{{CONCEPTS}}
+
+## Master notes
+{{MASTER}}

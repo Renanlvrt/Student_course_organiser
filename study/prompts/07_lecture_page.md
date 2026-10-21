@@ -1,44 +1,62 @@
-# Step 7: Build one lecture's page
+# Step 7: Build one lecture's visuals (animations + sandboxes)
 
-**Runner:** Claude Sonnet. **Unit:** ONE lecture (one at a time, so nothing is forgotten).
-**Inputs:** `{{MASTER_MD}}`, `{{CONCEPTS_JSON}}`, `{{TEACHING_JSON}}`, `{{EXERCISES_JSON}}`, the site shell in
-`{{SITE_DIR}}` (read `ARCHITECTURE.md` first and reuse its components; don't fork them).
+**Runner:** Claude Sonnet. **Unit:** ONE lecture.
 
-Write `{{SITE_DIR}}/lectures/{{NN}}-{{SLUG}}.html`, plus `js/lectures/{{NN}}.js` for its visuals and
-`data/L{{NN}}.js` (its JSON as a global, as in `ARCHITECTURE.md`). Use classic scripts only, with no
-`fetch` and no ES modules: the site must work from `file://`.
+The site shell already renders everything textual from the pipeline data: explanations, analogies, examples,
+misconceptions, exam tips, the full audited notes, flashcards and every exercise. **Your only job is the
+visuals:** one file, `visuals/{{LECTURE_ID}}.js`, that registers an **animation** and a **sandbox** for every
+concept the plan marks `all` or `aspects`. Recap concepts need none.
 
-Use the **creating-explainers** skill's figure and voice guidance for every concept section (hand-built,
-steppable Canvas/SVG figures, conversational but precise prose) and **frontend-design** for visual quality.
-Its output format is replaced by our shell's components, so the result is part of the site, not a separate
-single page.
+Use the **creating-explainers** skill's figure guidance (hand-built, steppable SVG/Canvas figures that show the
+mechanism) and **frontend-design** for visual quality.
 
-Follow `{{PLAN_JSON}}`: full sections only for `all`/`aspects` concepts; `recap` concepts get a compact recap
-card linking to their home lecture. Apply `{{BACKLINKS_JSON}}` to the earlier pages it lists.
+## The API (classic script; no `fetch`, no ES modules, no libraries: the site runs from `file://`)
+```js
+Study.visuals["L03.lfsr"] = {
+  animation: {                       // rendered by Study.stepper: Back / Next step / Play / speed / ← → keys
+    frames: [
+      { caption: "markdown + $LaTeX$ shown under the stage",
+        render(stage, C, i) { stage.append(Study.svg("svg", {viewBox: "0 0 640 220"}, /* … */)); } },
+      // or { caption, svg: "<svg …>…</svg>" }
+    ]
+  },
+  sandbox: {                         // rendered by Study.sandbox; its challenge text comes from the teaching data
+    build(stage, api, C) {           // api.h(tag, attrs, ...kids), api.svg(...), api.md(text), api.math(el), api.solved(msg)
+      /* inputs → live outputs; call api.solved() when the challenge goal is reached */
+    }
+  }
+};
+Study.selftest("LFSR degree-4 example", () => lfsrRun([0,1,1,0], [1,1,0,0], 10).join("") === "0110101111" || "wrong output");
+```
+- `C` holds the colour tokens. Use them with **one meaning each**, never raw hex: `C.plain` / `C.plainTint` =
+  plaintext and inputs, `C.key` / `C.keyTint` = keys, seeds and secrets, `C.cipher` / `C.cipherTint` =
+  ciphertext and outputs (and "wrong"), `C.ok` = correct, `C.teal` = structure and highlights, `C.ink`,
+  `C.muted`, `C.rule`, `C.tint`. **No purple or violet.** The page is white.
+- CSS helpers you can use: `.bits` (+ `.key` / `.plain` / `.cipher`) containing `<i>` cells for bit strings,
+  `<button>`, `<button class="primary">`, `<input>`, `<select>`.
+- SVG uses a `viewBox` so it scales. Labels are ≥ 13px at 640px wide. It must look good at 360px wide (mobile).
 
-## Page structure (in this order)
-1. **Map:** what this lecture answers, the concepts in learning order, and the earlier concepts it needs (links).
-2. **One section per concept, in `learning_order`:**
-   - hook → explanation (everything from the teaching entry, maths in KaTeX) → analogies (with "where it
-     breaks") → the source's worked examples → new examples
-   - **Animation** (`Stepper`), built exactly from the storyboard
-   - **Sandbox** (`Sandbox`), running the real algorithm, with its challenge
-   - misconceptions → exam tips → 2–3 quick-check exercises inline
-   - a `[src: … p.N]` footnote linking to the PDF page (`../../Lectures/{{PART}}/…pdf#page=N`)
-3. **Recall:** this lecture's flashcards.
-4. **Practice:** every exercise for this lecture, filterable by layer, concept and difficulty.
-5. **Summary sheet:** a one-screen, printable recap of every definition, formula and algorithm.
+## Rules
+- Build each animation **exactly from its storyboard** in the teaching data: every frame, in order. A frame
+  shows *what changes*: highlight the moving part, keep the rest still, and give each frame one clear caption.
+- Every sandbox runs the **real** computation (real XOR, real LFSR, real modular arithmetic with BigInt,
+  real probability), never canned outputs. It has the challenge from the teaching data and calls
+  `api.solved()` when the goal is reached.
+- For every computation you implement, add **at least one `Study.selftest`** with a known input and output,
+  taken from the lecture's worked examples when one exists.
+- Write plain, readable functions. Share helpers inside the file (e.g. one `lfsrStep` used by the animation,
+  the sandbox and the self-test).
+- The file must not throw at load time, even if a concept id is missing from the page.
 
-## Quality bar
-- The visuals must look **excellent**, not generic: purposeful colour (the same colour means the same
-  thing throughout, e.g. key = amber, plaintext = blue, ciphertext = red), smooth transitions, clear labels,
-  and readable at a glance. Use SVG for diagrams and Canvas for anything that animates a lot of elements.
-- Every sandbox output is **correct**. Add a tiny self-test in the JS (known input → known output) that runs on
-  load and logs a failure to the console.
-- For `hero_visual` concepts, leave a clearly marked slot `<div data-hero="{{id}}">`. The anatomy skill fills it
-  in a later pass.
+## Output
+Reply with the complete file between `<<<VISUALS_JS` and `VISUALS_JS>>>`, then a table:
+`concept id | animation frames | sandbox | self-tests`. Every `all` / `aspects` concept must be listed.
 
-## Done when
-Open the page headlessly, with no console errors and every self-test passing. Then print
-`concept id | explanation ✓ | analogy ✓ | example ✓ | animation ✓ | sandbox ✓ | exercises n`. Every
-concept in the inventory must appear, with every column ticked.
+## Plan (step 3b)
+{{PLAN}}
+
+## Teaching design (storyboards are in `animation` and `sandbox`)
+{{TEACHING}}
+
+## Concept inventory
+{{CONCEPTS}}

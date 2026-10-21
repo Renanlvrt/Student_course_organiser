@@ -19,7 +19,8 @@ meaning** and is represented by a concept in the inventory.
 Also check the other direction. For each statement in the notes that is not marked `💡 Added`, confirm a
 source supports it.
 
-## Output → `{{OUT_DIR}}/{{LECTURE_STEM}} - audit.json`
+## Output
+First the audit between `<<<AUDIT` and `AUDIT>>>`:
 ```json
 {"missing": [{"src": "... p.5", "item": "exact quote or description", "fix": "text to insert", "after_heading": "### p.5: ..."}],
  "distorted": [{"src": "...", "notes_say": "...", "source_says": "...", "fix": "..."}],
@@ -27,7 +28,19 @@ source supports it.
  "concepts_missing": [{"name": "...", "src": "..."}],
  "verdict": "PASS only if all four lists are empty"}
 ```
-Apply every fix to the master notes and the inventory yourself. Then re-run the audit on the changed pages
-and print the final verdict. The pipeline repeats this step until the verdict is PASS, for **at most 3
+Then apply every fix yourself and emit the **complete corrected** master notes between `<<<MASTER_MD` and
+`MASTER_MD>>>`, and the complete corrected inventory between `<<<JSON` and `JSON>>>`. If the verdict is
+PASS, emit them unchanged. The verdict refers to the state **before** your fixes. The pipeline repeats this step until the verdict is PASS, for **at most 3
 rounds**. After that, the lecture is marked `needs human`, with the remaining items listed, so that a
 looping audit can't burn through usage limits.
+
+## Sources
+{{SOURCES}}
+
+## Candidate master notes
+<<<CANDIDATE
+{{MASTER}}
+CANDIDATE>>>
+
+## Candidate concept inventory
+{{CONCEPTS}}
