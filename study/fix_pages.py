@@ -82,6 +82,7 @@ def fix_module(cfg, module, runner_name="claude", model="sonnet", limit=None, lo
                     pages[n] = new
                     cache[keys[n]] = new
                     entry["fixed_pages"].append(n)
+                    entry.setdefault("fixed_by", {})[str(n)] = f"{runner_name}:{usage.get('model', model)}"
                 md_path.write_text(join_pages(head, pages), encoding="utf-8")
                 man_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
                 cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")

@@ -188,3 +188,8 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   the animations **and short videos**; **buttons instead of plain links** (done: part picker, lecture tiles,
   today's actions). Videos: step 7c (`07c_videos.md`), 1–3 per lecture, 30–60 s, silent with captions,
   written by Claude, rendered locally with Manim 0.19 (free), shown under the concept.
+- **Round 7 (2026-10-21 evening): "everything should be conducted by you (Claude)… way safer… way better
+  results."** → Claude Code is the default runner for **every** step (Sonnet; audit on **Opus**). Everything
+  Gemini produced was redone with Claude: 50 page fixes (un-marked and re-fixed from the images), the notes map,
+  and Lecture 1's capture / audit / registry (archived in `data/study/archive/`). Antigravity stays as an opt-in
+  fallback only. The page manifest now records `fixed_by` per page.

@@ -1,8 +1,8 @@
 """Run one prompt through a CLI agent on the user's subscription (no API keys) and record usage.
 
 claude: `claude -p` (stream-json gives rate_limit_event with 5-hour / weekly utilisation).
-agy:    `agy -p <prompt file>` (Antigravity, Google quota). Default for reading and teaching content; Claude
-        is kept for visuals. Headless agy hangs if an MCP server never connects (StitchMCP did: removed
+agy:    `agy -p <prompt file>` (Antigravity, Google quota). Opt-in only (--runner agy / auto): the user wants
+        Claude Code to run every step (2026-10-21). Headless agy hangs if an MCP server never connects (StitchMCP did: removed
         from ~/.gemini/config/mcp_config.json on 2026-10-21, backup next to it).
 """
 import json

@@ -73,7 +73,7 @@ def out_dir(cfg, module, part, folder):
 
 
 # ------------------------------------------------------------------ step 1b
-def map_notes(cfg, module, runner_name="agy", log=print):
+def map_notes(cfg, module, runner_name="claude", log=print):
     md_dir, man = notes_docs(cfg, module)
     outlines = []
     for part in module.parts:
@@ -169,15 +169,28 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
             LECTURE_MD_FILES="the sources below", NOTES_MD_SECTIONS="(included below)", MASTER_MD="below",
             CONCEPTS_JSON="below", OUT_DIR=od, LECTURE_STEM=stem,
             SOURCES=_sources_text(sources), MASTER=master, CONCEPTS=concepts)
-        # a different model from capture (Gemini): Sonnet, through agy on Google's quota when possible
-        model = "claude-sonnet-5-5-high" if runner_name == "agy" else "sonnet"
-        text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
+        # a different, stronger model than the capture (Sonnet): Opus on Claude Code; Sonnet-in-agy on agy
+        model = "claude-sonnet-5-5-high" if runner_name == "agy" else "opus"
+        try:
+            text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
+        except runner.RunnerError as e:
+            if runner_name != "agy" or "quota" not in str(e).lower():
+                raise
+            # Claude-in-agy quota is small; fall back to Gemini in a fresh session (independent of the capture run)
+            log(f"{lid} audit: {model} quota reached, auditing with {runner.AGY_DEFAULT} instead")
+            model = runner.AGY_DEFAULT
+            text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
         result = json_block(text, "AUDIT")
         counts = {k: len(result.get(k, [])) for k in ("missing", "distorted", "unsupported", "concepts_missing")}
-        status["rounds"].append({"counts": counts, "result": result})
-        (od / f"{stem} - Master.md").write_text(block(text, "MASTER_MD") + "\n", encoding="utf-8")
+        status["rounds"].append({"model": model, "counts": counts, "result": result})
+        new_master = block(text, "MASTER_MD")
+        if len(new_master) < 0.9 * len(master):          # an audit adds and corrects; it must never shrink the notes
+            raise runner.RunnerError(f"{lid} audit returned a Master {len(new_master)} chars long (was {len(master)}); "
+                                     "kept the old one. Re-run the audit.")
+        (od / f"{stem} - Master.md").write_text(new_master + "\n", encoding="utf-8")
         _write_json(od / f"{stem} - concepts.json", json_block(text))
-        log(f"{lid} audit round {len(status['rounds'])}: {counts} ({usage.get('seconds')}s)")
+        _write_json(od / f"{stem} - audit.json", status)
+        log(f"{lid} audit round {len(status['rounds'])}: {counts} ({runner.describe(usage)})")
         if not any(counts.values()):
             status["verdict"] = "PASS"
             break
@@ -236,10 +249,23 @@ def teaching(cfg, module, part, folder, runner_name="claude", log=print):
                                  PART=part, MASTER_MD="below", CONCEPTS_JSON="below", PLAN_JSON="below",
                                  OUT_DIR=od, LECTURE_STEM=stem, MASTER=i["MASTER"], CONCEPTS=i["CONCEPTS"],
                                  PLAN=i["PLAN"])
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
-    t = json_block(text)
+    ids = [c["id"] for c in json.loads(i["CONCEPTS"])]
+
+    def one(batch):
+        focus = (f"\n\n## This call\nDesign ONLY these concept ids (all of them, in full): {', '.join(batch)}. "
+                 "Reply with a JSON list of exactly those concepts.")
+        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
+        got = json_block(text)
+        log(f"{lid} teaching: {[t['id'] for t in got]} ({runner.describe(usage)})")
+        return got
+    partial = od / f"{stem} - teaching.partial.json"
+    t = _batched(partial, ids, TEACH_BATCH, one)
+    missing = sorted(set(ids) - {x["id"] for x in t})
+    if missing:
+        raise runner.RunnerError(f"{lid} teaching is missing concepts {missing}; delete {partial.name} and re-run.")
     _write_json(od / f"{stem} - teaching.json", t)
-    log(f"{lid} teaching: {len(t)} concepts designed ({runner.describe(usage)})")
+    partial.unlink()
+    log(f"{lid} teaching: {len(t)} concepts designed")
 
 
 def exercises(cfg, module, part, folder, runner_name="claude", log=print):
@@ -294,14 +320,26 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     prompt = runner.build_prompt("07_lecture_page.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part,
                                  LECTURE_ID=lid, PLAN=i["PLAN"], CONCEPTS=i["CONCEPTS"],
                                  TEACHING=(od / f"{stem} - teaching.json").read_text(encoding="utf-8"))
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
-    js = block(text, "VISUALS_JS")
+    plan = json.loads(i["PLAN"]) if i["PLAN"].strip().startswith(("[", "{")) else []
+    plan = plan.get("concepts", plan) if isinstance(plan, dict) else plan
+    recap = {p["id"] for p in plan if isinstance(p, dict) and p.get("teach") == "recap"}
+    ids = [c["id"] for c in json.loads(i["CONCEPTS"]) if c["id"] not in recap]
+
+    def one(batch):
+        focus = (f"\n\n## This call\nBuild visuals ONLY for these concept ids: {', '.join(batch)}. "
+                 "Your file is one of several chunks loaded on the same page: keep every helper inside it.")
+        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
+        js = block(text, "VISUALS_JS")
+        log(f"{lid} visuals: {batch} ({runner.describe(usage)})")
+        return [f"// ---- {', '.join(batch)}\n(function () {{\n{js}\n}})();\n"]
+    partial = od / f"{stem} - visuals.partial.json"
+    js = "\n".join(_batched(partial, ids, VIS_BATCH, one))
+    partial.unlink()
     target.write_text(js + "\n", encoding="utf-8")
     vis_dir = site_dir(cfg, module, part) / "visuals"
     vis_dir.mkdir(parents=True, exist_ok=True)
     (vis_dir / f"{lid}.js").write_text(js + "\n", encoding="utf-8")
-    log(f"{lid} visuals: {js.count('Study.visuals[')} concepts, {js.count('Study.selftest(')} self-tests "
-        f"({runner.describe(usage)})")
+    log(f"{lid} visuals: {js.count('Study.visuals[')} concepts, {js.count('Study.selftest(')} self-tests")
 
 
 def _render_scenes(py_file, classes, media):
@@ -364,6 +402,21 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
     _write_json(index, result)
     log(f"{lid} videos: {len(result)} rendered" + (f", FAILED: {sorted(failed)}" if failed else "") +
         f" ({runner.describe(usage)})")
+
+
+TEACH_BATCH, VIS_BATCH = 5, 4
+
+
+def _batched(partial, ids, size, call):
+    """Run call(batch) over ids in batches, saving after each so an interrupted step resumes where it stopped."""
+    done = _read_json(partial, {"batches": [], "items": []})
+    for b in range(0, len(ids), size):
+        if b in done["batches"]:
+            continue
+        done["items"] += call(ids[b:b + size])
+        done["batches"].append(b)
+        _write_json(partial, done)
+    return done["items"]
 
 
 def _read_json(p, default):

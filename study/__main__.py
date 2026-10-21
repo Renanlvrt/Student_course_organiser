@@ -13,7 +13,7 @@ def main(argv=None):
     c.add_argument("--force", action="store_true", help="reconvert unchanged PDFs too")
     f = sub.add_parser("fix", help="Step 1: rewrite flagged pages from page images (vision model)")
     f.add_argument("module")
-    f.add_argument("--runner", default="agy", choices=["claude", "agy"])
+    f.add_argument("--runner", default="claude", choices=["claude", "agy"])
     f.add_argument("--model", default="sonnet")
     f.add_argument("--limit", type=int, help="stop after this many model calls")
     n = sub.add_parser("mapnotes", help="Step 1b: assign every page of module-wide notes to a lecture")
@@ -23,8 +23,8 @@ def main(argv=None):
     lec.add_argument("part")
     lec.add_argument("number", type=int)
     lec.add_argument("--steps", default="capture,audit,registry,teaching,exercises,visuals,videos")
-    lec.add_argument("--runner", default="auto", choices=["auto", "claude", "agy"],
-                     help="auto: Claude for visuals, Antigravity for everything else")
+    lec.add_argument("--runner", default="claude", choices=["auto", "claude", "agy"],
+                     help="claude (default): Claude Code runs every step; auto: Claude for visuals, Antigravity for the rest")
     st = sub.add_parser("site", help="Build Website/<Part>/ from the pipeline output")
     st.add_argument("module")
     st.add_argument("part")

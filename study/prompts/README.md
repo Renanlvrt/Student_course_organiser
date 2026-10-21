@@ -3,8 +3,8 @@
 These replace the three 2025 prompts ("prompt reading pdf", "prompt website", "prompt new exercises").
 Every prompt is run with `00_rules.md` prepended and its `{{placeholders}}` filled in by the pipeline.
 
-Default `--runner auto`: Antigravity (Google quota) reads and writes all content; Claude Code only builds visuals,
-sandboxes and videos. `--runner claude|agy` overrides. Publish for the phone: `python -m study publish <Module>`.
+Default `--runner claude`: **Claude Code runs every step** (Sonnet; the audit uses Opus so it is an independent,
+stronger check). `--runner agy` or `auto` (Antigravity for content, Claude for visuals) remain as opt-in fallbacks. Publish for the phone: `python -m study publish <Module>`.
 
 | # | Prompt | Unit | Default runner | Skills used |
 |---|---|---|---|---|
