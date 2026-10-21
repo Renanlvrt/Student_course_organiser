@@ -31,6 +31,9 @@ def main(argv=None):
     ck = sub.add_parser("check", help="Coverage check: is every concept fully built?")
     ck.add_argument("module")
     ck.add_argument("part")
+    al = sub.add_parser("all", help="Build everything unattended: fixes, notes map, every lecture, site, publish")
+    al.add_argument("module")
+    al.add_argument("--part", action="append", help="only this part (repeatable)")
     pb = sub.add_parser("publish", help="Push the built sites to the module's GitHub repo + Pages (phone access)")
     pb.add_argument("module")
     args = ap.parse_args(argv)
@@ -54,6 +57,9 @@ def main(argv=None):
     elif args.cmd == "site":
         from .site import build_site
         build_site(cfg, module, args.part)
+    elif args.cmd == "all":
+        from .run_all import run_all
+        run_all(cfg, module, args.part)
     elif args.cmd == "publish":
         from .publish import publish
         publish(cfg, module)

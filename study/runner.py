@@ -52,7 +52,7 @@ def claude_headroom(cfg):
     u = last_usage(cfg).get("claude", {})
     five, week = u.get("five_hour"), u.get("seven_day")
     age = (datetime.now() - datetime.fromisoformat(u["seen"])).total_seconds() / 3600 if u.get("seen") else 0
-    if age >= 5:                       # that 5-hour window has reset since the reading
+    if age >= 5 or (u.get("five_hour_resets") and time.time() > u["five_hour_resets"]):   # window has reset since
         five = None
     if age >= 24 * 7:
         week = None
@@ -65,7 +65,10 @@ def claude_headroom(cfg):
 def run_claude(cfg, prompt, model="sonnet", tools=("Read",), add_dirs=(), cwd=None, timeout=1800):
     ok, msg = claude_headroom(cfg)
     if not ok:
-        raise RunnerError(f"Stopped before starting: {msg} (limit {STOP_AT:.0%}).")
+        u = last_usage(cfg).get("claude", {})
+        week_full = (u.get("seven_day") or 0) >= STOP_AT
+        raise LimitReached(f"Stopped before starting: {msg} (limit {STOP_AT:.0%}).",
+                           u.get("seven_day_resets") if week_full else u.get("five_hour_resets"))
     cmd = [shutil.which("claude") or "claude", "-p", "--model", CLAUDE_MODELS.get(model, model), "--output-format", "stream-json",
            "--verbose", "--allowedTools", ",".join(tools)]
     for d in add_dirs:
@@ -82,7 +85,9 @@ def run_claude(cfg, prompt, model="sonnet", tools=("Read",), add_dirs=(), cwd=No
         if ev.get("type") == "rate_limit_event":
             w = ev["rate_limit_info"].get("unifiedWindows", {})
             usage = {"five_hour": w.get("five_hour", {}).get("utilization"),
-                     "seven_day": w.get("seven_day", {}).get("utilization")}
+                     "seven_day": w.get("seven_day", {}).get("utilization"),
+                     "five_hour_resets": w.get("five_hour", {}).get("resetsAt"),
+                     "seven_day_resets": w.get("seven_day", {}).get("resetsAt")}
         elif ev.get("type") == "result":
             result = ev
     if usage:
@@ -91,6 +96,13 @@ def run_claude(cfg, prompt, model="sonnet", tools=("Read",), add_dirs=(), cwd=No
         raise RunnerError(f"claude failed (exit {proc.returncode}): "
                           f"{(result or {}).get('result') or proc.stderr[-800:]}")
     return result["result"], {"seconds": round(time.time() - t0), "cost_usd": result.get("total_cost_usd"), **usage}
+
+
+class LimitReached(RunnerError):
+    """Claude's usage window is above STOP_AT; `resume_at` is a unix time when it resets (or None)."""
+    def __init__(self, msg, resume_at=None):
+        super().__init__(msg)
+        self.resume_at = resume_at
 
 
 def run_agy(cfg, prompt, model=None, add_dirs=(), cwd=None, timeout=1800, **_):

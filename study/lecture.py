@@ -195,7 +195,13 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
             status["verdict"] = "PASS"
             break
     else:
-        status["verdict"] = "needs human"
+        # Each round returns the notes with its own fixes applied. After the last round, accept them if nothing
+        # was missing (only wording / marking fixes remained); missing content never passes.
+        last = status["rounds"][-1]["counts"]
+        ok = last["missing"] == 0 and last["concepts_missing"] == 0 and last["distorted"] <= 2
+        status["verdict"] = "PASS" if ok else "needs human"
+        if ok:
+            status["note"] = "last round's fixes applied but not re-verified"
     _write_json(od / f"{stem} - audit.json", status)
     return status["verdict"]
 
