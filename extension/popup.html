@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#1d1e22; --panel:#26272d; --row:#2c2d34; --fg:#e9e9ec; --muted:#9c9daa; --accent:#5b8cff; --ok:#3fb950; --warn:#e3a72f; --err:#f2665b; }
+  body { margin:0; width:360px; background:var(--bg); color:var(--fg); font:13px "Segoe UI", system-ui, sans-serif; }
+  header { background:var(--panel); padding:10px 12px; display:flex; align-items:center; gap:8px; }
+  header b { font-size:14px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#6b6d78; }
+  .dot.on { background:var(--ok); }
+  #app { margin-left:auto; color:var(--muted); font-size:11px; }
+  main { padding:10px 12px 12px; }
+  .course { font-weight:600; margin-bottom:2px; }
+  .muted { color:var(--muted); font-size:11px; }
+  .warn { color:var(--warn); font-size:12px; margin:6px 0; }
+  .err { color:var(--err); }
+  ul { list-style:none; padding:0; margin:8px 0; max-height:260px; overflow:auto; }
+  li { background:var(--row); margin:3px 0; padding:6px 8px; border-radius:4px; display:flex; gap:8px; align-items:center; cursor:pointer; }
+  li input { margin:0; }
+  li span.n { margin-left:auto; color:var(--muted); font-size:11px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:7px 10px; font:600 12px "Segoe UI"; cursor:pointer; width:100%; margin-top:6px; }
+  button.secondary { background:var(--row); color:var(--fg); }
+  button:disabled { opacity:.5; cursor:default; }
+  progress { width:100%; margin-top:8px; }
+</style>
+</head>
+<body>
+<header><span class="dot" id="dot"></span><b>Alt+O Blackboard</b><span id="app">checking organiser…</span></header>
+<main>
+  <div id="content" class="muted">Loading…</div>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>

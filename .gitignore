@@ -1,0 +1,25 @@
+# Secrets - never commit
+.env
+.env.*
+*.key
+secrets*.json
+config.local.json
+
+# Runtime state / logs
+log.json
+state.json
+*.log
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+
+# Extension build artefacts
+*.crx
+*.pem

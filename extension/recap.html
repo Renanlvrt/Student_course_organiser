@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Download recap</title>
+<style>
+  :root { --bg:#1d1e22; --panel:#26272d; --row:#2c2d34; --hi:#363844; --line:#3a3c45; --fg:#e9e9ec; --muted:#9c9daa;
+          --accent:#5b8cff; --ok:#3fb950; --warn:#e3a72f; --err:#f2665b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px "Segoe UI", system-ui, sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:18px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  .hint { color:var(--muted); font-size:12px; margin:0 0 14px; }
+  ul.tree, ul.tree ul { list-style:none; margin:0; padding:0; }
+  ul.tree ul { margin-left:18px; border-left:1px solid var(--line); padding-left:10px; }
+  .folder { color:var(--muted); padding:4px 6px; border-radius:4px; display:inline-block; }
+  .folder b { color:var(--fg); font-weight:600; }
+  .folder.drop { cursor:copy; }
+  .folder.over { background:var(--accent); color:#fff; }
+  .folder.over b { color:#fff; }
+  .file { display:flex; align-items:baseline; gap:8px; padding:4px 6px; border-radius:4px; cursor:grab; }
+  .file:hover { background:var(--row); }
+  .file .dot { font-size:10px; }
+  .file .was { color:var(--muted); font-size:12px; }
+  .file .acts { margin-left:auto; display:flex; gap:10px; visibility:hidden; }
+  .file:hover .acts, .file.open .acts { visibility:visible; }
+  .acts a { color:var(--muted); font-size:12px; cursor:pointer; text-decoration:none; }
+  .acts a:hover { color:var(--fg); }
+  .msg { color:var(--warn); font-size:12px; }
+  .picker { margin:4px 0 8px 22px; padding:10px; background:var(--panel); border-radius:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  select { background:var(--row); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:5px 6px; font:13px "Segoe UI"; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:6px 12px; font:600 13px "Segoe UI"; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--muted); }
+  .group { margin-top:22px; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line);
+           padding:8px 14px; border-radius:6px; font-size:13px; opacity:0; transition:opacity .2s; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Download recap</h1>
+  <div class="sub" id="summary">Loading…</div>
+  <p class="hint">Something in the wrong place? Drag it onto another folder, or hover over it and click <b>move</b>.</p>
+  <div id="tree"></div>
+</main>
+<div id="toast"></div>
+<script src="recap.js"></script>
+</body>
+</html>

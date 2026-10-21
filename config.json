@@ -1,0 +1,88 @@
+{
+  "downloads_folder": "C:\\Users\\renan\\Downloads",
+  "root_folder": "C:\\Users\\renan\\Desktop\\Durham2\\courses",
+  "hotkey": "alt+o",
+  "confidence_threshold": 0.7,
+  "gemini_model": "gemini-3.5-flash",
+  "gemini_fallback_model": "gemini-flash-lite-latest",
+  "port": 47821,
+  "file_types": [".pdf", ".pptx", ".docx", ".py", ".ipynb", ".c", ".h", ".zip", ".txt", ".md", ".csv"],
+  "part_categories": ["Lectures", "Practicals", "Solutions", "Readings"],
+  "module_categories": ["Assessment", "Exam Prep", "Other"],
+  "part_extra_folders": ["Website"],
+  "layout_note": "Module/Lectures/<Part>/Lecture NN - Topic, Module/Practicals/<Part>/Practical NN - Topic, Module/Website/<Part>, Module/Other",
+  "modules": [
+    {
+      "key": "AADS",
+      "code": "COMP3811",
+      "name": "Advanced Algorithms & Data Structures",
+      "parts": ["Design of Algorithms and Data Structures", "Advanced Algorithms"],
+      "parts_by_term": false,
+      "aliases": ["aads", "ads", "algorithms"],
+      "keywords": ["algorithm", "data structure", "complexity", "asymptotic", "big-o", "graph", "dynamic programming", "greedy", "divide and conquer", "heap", "hash table", "hashing", "binary search tree", "red-black", "amortised", "amortized", "np-complete", "np-hard", "network flow", "approximation algorithm", "linear programming", "randomised algorithm", "randomized algorithm", "shortest path", "spanning tree", "sorting"],
+      "part_keywords": [
+        ["data structure", "heap", "hashing", "hash table", "binary search tree", "balanced tree", "red-black", "avl", "b-tree", "union-find", "priority queue", "greedy", "divide and conquer", "dynamic programming", "sorting", "amortised", "amortized", "design of algorithms"],
+        ["advanced algorithms", "approximation", "randomised", "randomized", "np-hard", "np-complete", "network flow", "max flow", "linear programming", "parameterized", "parameterised", "fixed-parameter", "online algorithm", "streaming algorithm", "fpt"]
+      ]
+    },
+    {
+      "key": "Crypto",
+      "code": "COMP3731",
+      "name": "Cryptography",
+      "parts": ["Symmetric Cryptography", "Asymmetric Cryptography"],
+      "parts_by_term": false,
+      "aliases": ["crypto", "cryptography"],
+      "keywords": ["cryptograph", "cipher", "encryption", "decryption", "plaintext", "ciphertext", "aes", "des", "rsa", "diffie-hellman", "one-time pad", "secret key", "public key", "hash function", "mac", "signature"],
+      "part_keywords": [
+        ["symmetric", "block cipher", "stream cipher", "aes", "des", "feistel", "one-time pad", "modes of operation", "cbc", "ctr mode", "mac", "hmac", "prf", "prg", "pseudorandom", "secret key", "hash function", "substitution", "vigenere", "perfect secrecy"],
+        ["asymmetric", "public key", "public-key", "rsa", "diffie-hellman", "elgamal", "elliptic curve", "discrete log", "digital signature", "lattice", "factoring", "key exchange", "paillier"]
+      ]
+    },
+    {
+      "key": "DLCV",
+      "code": "COMP3801",
+      "name": "Deep Learning & Computer Vision",
+      "parts": ["Deep Learning", "Computer Vision"],
+      "parts_by_term": false,
+      "aliases": ["dlcv"],
+      "keywords": ["deep learning", "neural network", "pytorch", "tensorflow", "backpropagation", "gradient descent", "convolution", "cnn", "computer vision", "image", "camera", "pixel", "segmentation", "object detection"],
+      "part_keywords": [
+        ["deep learning", "neural network", "backpropagation", "gradient descent", "mlp", "perceptron", "optimiser", "optimizer", "regularisation", "regularization", "dropout", "transformer", "attention", "rnn", "lstm", "autoencoder", "gan", "diffusion", "pytorch"],
+        ["computer vision", "camera", "image formation", "feature detection", "edge detection", "sift", "harris", "segmentation", "object detection", "optical flow", "stereo", "epipolar", "homography", "image processing", "opencv", "tracking"]
+      ],
+      "filename_prefixes": {"dl": 0, "cv": 1}
+    },
+    {
+      "key": "RL_AGT",
+      "code": "COMP3821",
+      "name": "Reinforcement Learning & Algorithmic Game Theory",
+      "parts": ["Algorithmic Game Theory", "Reinforcement Learning"],
+      "parts_by_term": false,
+      "aliases": ["rlagt", "rl_agt"],
+      "keywords": ["game theory", "nash", "equilibrium", "mechanism design", "auction", "reinforcement learning", "markov decision", "mdp", "q-learning", "policy", "bandit", "bellman"],
+      "part_keywords": [
+        ["game theory", "algorithmic game theory", "nash", "equilibrium", "mechanism design", "auction", "price of anarchy", "payoff", "strategic", "social choice", "congestion game", "zero-sum", "minimax", "vcg", "best response"],
+        ["reinforcement learning", "markov decision", "mdp", "q-learning", "sarsa", "policy gradient", "value function", "value iteration", "policy iteration", "bandit", "temporal difference", "bellman", "reward", "monte carlo", "actor-critic"]
+      ],
+      "filename_prefixes": {"agt": 0, "rl": 1}
+    },
+    {
+      "key": "AppliedSec",
+      "code": "COMP3761",
+      "name": "Applied Security",
+      "parts": ["Term 1", "Term 2"],
+      "parts_by_term": true,
+      "aliases": ["appliedsec", "applied security", "applied_security"],
+      "keywords": ["security", "exploit", "buffer overflow", "fuzzing", "fuzzer", "vulnerability", "malware", "shellcode", "return-oriented", "rop", "xss", "sql injection", "penetration", "attack", "gdb", "stack canary", "aslr", "reverse engineering", "qemu"]
+    },
+    {
+      "key": "ProjectPrep",
+      "code": "COMP3591",
+      "name": "Project Preparation",
+      "parts": ["Term 1", "Term 2"],
+      "parts_by_term": true,
+      "aliases": ["projectprep", "project prep", "project preparation"],
+      "keywords": ["project preparation", "dissertation", "literature review", "project proposal", "research question", "ethics", "project plan", "gantt", "supervisor", "project report"]
+    }
+  ]
+}
