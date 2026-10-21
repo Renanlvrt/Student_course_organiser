@@ -203,3 +203,23 @@ button:disabled { opacity: .45; cursor: default; }
 .film { margin: 1.6rem 0; }
 .film video { display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--tint); border: 1px solid var(--rule); border-radius: 12px; }
 .film figcaption { color: var(--ink-2); font-size: .88rem; margin-top: .45rem; }
+
+/* ---------- words to know, glossary, intuition, tables, figures, hard concepts */
+.words { margin: 1.2rem 0 1.4rem; padding: .9rem 1.1rem; border: 1px solid var(--rule); border-radius: 12px; background: #fff; }
+.words .label { margin: 0 0 .4rem; font-weight: 600; color: var(--teal); font-size: .9rem; }
+.glossary { margin: 0; }
+.glossary dt { font-weight: 600; margin-top: .7rem; display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.glossary dt:first-child { margin-top: 0; }
+.glossary dd { margin: .15rem 0 0; }
+.glossary .formal { color: var(--ink-2); font-size: .94em; margin-top: .2rem; }
+.glossary .from { font-size: .8rem; font-weight: 400; }
+.intuition { margin: 1rem 0; padding: .8rem 1.1rem; border-left: 3px solid var(--key); background: var(--key-tint); border-radius: 0 10px 10px 0; }
+.table { overflow-x: auto; }
+.table table { min-width: 60%; }
+.table th { background: var(--tint); }
+.hardtag { display: inline-block; margin-left: .6rem; vertical-align: middle; font-size: .72rem; font-weight: 600; padding: .15rem .55rem;
+  border-radius: 999px; color: var(--cipher); background: var(--cipher-tint); }
+.drawing { margin: 1.4rem 0; }
+.drawing .stage { min-height: 0; }
+:root[data-theme="dark"] .words { background: var(--tint); }
+@media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

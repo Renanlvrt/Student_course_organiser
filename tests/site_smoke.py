@@ -15,7 +15,10 @@ from study.site import TEMPLATE
 
 CONCEPT = {"id": "L01.xor", "name": "XOR of bit strings", "kind": "definition",
            "summary": "Bitwise addition mod 2, $a \\oplus b$.", "src": ["Lecture 01 p.3"]}
-TEACH = {"id": "L01.xor", "learning_order": 1, "hook": "How can one operation both lock and unlock?",
+TEACH = {"id": "L01.xor", "learning_order": 1, "difficulty": 4, "hard": True,
+         "glossary": [{"term": "bit string", "plain": "a row of 0s and 1s", "formal": "an element of $\\{0,1\\}^n$"}],
+         "intuition": "Flipping twice gets you back.",
+         "tables": [{"title": "Truth table", "markdown": "| a | b | a xor b |\n|---|---|---|\n| 0 | 1 | 1 |"}], "hook": "How can one operation both lock and unlock?",
          "explanation": "For bits, $0 \\oplus 0 = 0$, $1 \\oplus 1 = 0$ and otherwise $1$.\n\n$$m \\oplus k \\oplus k = m$$",
          "analogies": [{"analogy": "A light switch flipped twice is back where it started.", "breaks": "Switches have no notion of strings."}],
          "examples": ["$1010 \\oplus 0110 = 1100$"], "misconceptions": ["XOR is not OR."], "exam_tips": ["Show the bitwise working."],
@@ -33,8 +36,12 @@ VISUAL = r"""
 Study.visuals["L01.xor"] = {
   animation: { frames: [
     { caption: "Two bit strings, $m$ and $k$.", render(stage, C) { stage.append(Study.svg("svg", {viewBox: "0 0 200 40", width: 200},
-        Study.svg("text", {x: 10, y: 25, fill: C.plain}, "1010"), Study.svg("text", {x: 110, y: 25, fill: C.key}, "0110"))); } },
+        Study.svg("text", {x: 10, y: 25, fill: C.plain, "data-k": "m"}, "1010"), Study.svg("text", {x: 110, y: 25, fill: C.key}, "0110"))); } },
+    { caption: "The message slides right.", render(stage, C) { stage.append(Study.svg("svg", {viewBox: "0 0 200 40", width: 200},
+        Study.svg("text", {x: 60, y: 25, fill: C.cipher, "data-k": "m"}, "1010"))); } },
     { caption: "XOR them: $1100$.", svg: "<svg viewBox='0 0 200 40' width='200'><text x='10' y='25'>1100</text></svg>" } ] },
+  figures: [{ title: "Figure one", caption: "A drawing.", svg: "<svg viewBox='0 0 10 10'><rect width='10' height='10'/></svg>" }],
+  animations: [{ title: "Second animation", frames: [{ caption: "only frame", svg: "<svg viewBox='0 0 10 10'></svg>" }] }],
   sandbox: { build(stage, api) {
     const a = api.h("input", {type: "text", value: "1010"}), b = api.h("input", {type: "text", value: "1010"}), out = api.h("output", {}, "");
     const xor = (x, y) => x.split("").map((c, i) => c === y[i] ? "0" : "1").join("");
@@ -69,8 +76,10 @@ def main():
     (site / "data/L01.js").write_text("window.LECTURES = window.LECTURES || {}; window.LECTURES.L01 = " + json.dumps(lec) + ";", encoding="utf-8")
     (site / "visuals/L01.js").write_text(VISUAL, encoding="utf-8")
     checks = [
-        ("lecture.html?id=L01", ["XOR of bit strings", "Next step", "XOR playground", "Solved.", "katex", "light switch", "Quick check", "Short film: XOR undoes itself"]),
+        ("lecture.html?id=L01", ["XOR of bit strings", "Next step", "XOR playground", "Solved.", "katex", "light switch", "Quick check", "Short film: XOR undoes itself", "Words to know", "a row of 0s and 1s",
+                                    "Hard concept", "The idea in plain words", "Truth table", "Figure one", "Second animation"]),
         ("lecture.html?id=L01&tab=practice", ["Ask Claude to mark it", "3 exercises"]),
+        ("lecture.html?id=L01&tab=glossary", ["bit string", "XOR of bit strings"]),
         ("index.html", ["0 of 1 concepts mastered", "3 exercises in the gym"]),
         ("practice.html?tab=recall", ["Show answer"]),
     ]

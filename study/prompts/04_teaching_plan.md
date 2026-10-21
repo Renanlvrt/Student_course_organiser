@@ -1,6 +1,6 @@
 # Step 4: Teaching design for one lecture
 
-**Runner:** Claude Sonnet (Claude Code, or Sonnet inside Antigravity when Claude limits are high).
+**Runner:** Claude Sonnet on Claude Code.
 **Unit:** one lecture. **Inputs:** the audited `{{MASTER_MD}}` and `{{CONCEPTS_JSON}}`.
 
 Follow `{{PLAN_JSON}}` (step 3b): `all` = full treatment; `aspects:[…]` = teach only those aspects and link to the
@@ -13,10 +13,20 @@ Design **how each concept will be taught**, before any HTML is written. Emit a J
 {"id": "L03.lfsr",
  "learning_order": 4,
  "hook": "the question this concept answers, in one sentence",
+ "difficulty": 3,
+ "hard": false,
+ "glossary": [{"term": "negligible function", "plain": "everyday-language meaning a first-year student gets at once",
+               "formal": "the course's exact definition in LaTeX, with [src: …]"}],
+ "intuition": "the idea in plain words, before any formalism (2–4 sentences, an image the student can hold in mind)",
  "explanation": "clear, complete explanation in markdown+LaTeX, faithful to the master notes; nothing from the notes left out",
  "analogies": ["2+ real-world analogies; each says exactly where the analogy breaks"],
  "examples": ["the source's worked examples, verbatim with numbers", "2+ NEW examples with full working (💡 Added)"],
  "misconceptions": ["typical wrong belief → why it is wrong"],
+ "tables": [{"title": "...", "markdown": "| … | … |
+|---|---|
+| … | … |"}],
+ "figures": [{"title": "...", "draws": "exactly what the drawing shows: boxes, arrows, labels, colours by meaning", "makes_clear": "..."}],
+ "extra_animations": [{"title": "...", "what_moves": "frame-by-frame storyboard", "makes_clear": "..."}],
  "animation": {"title": "...", "what_moves": "step-by-step storyboard: frame 1 shows..., frame 2...", "controls": "play/pause/step/back/speed",
                "makes_clear": "the one insight a student gets by watching"},
  "sandbox": {"title": "...", "inputs": "what the student can change (keys, bits, taps, sizes...)", "outputs": "what updates live",
@@ -26,6 +36,26 @@ Design **how each concept will be taught**, before any HTML is written. Emit a J
  "recall_cards": [{"front": "...", "back": "...", "layer": "recall|understanding|boundaries"}],
  "exam_tips": ["how this concept is typically examined, what markers look for, traps"]}
 ```
+
+## Rules for words, tables and drawings (the student is a visual learner)
+- **Define every word.** `glossary` lists every technical term, symbol and abbreviation the concept uses
+  (including ones a strong student might not know: "polynomial time", "uniformly at random", "adversary",
+  "oracle", "bijection", "mod"…). Each has a plain meaning and, when the course defines it, the formal one.
+  Prefer too many over too few.
+- **Tables** whenever things can be compared or listed: cipher vs cipher, attack models side by side, truth
+  tables, a worked example's state at every step, parameter sizes, "property / holds? / why".
+- **Figures**: at least one drawing per concept (a construction's block diagram, a security game as two
+  players exchanging messages, a key space, a probability tree). Describe precisely what to draw.
+
+## Hard concepts (anything a student probably doesn't already know)
+Rate `difficulty` 1–5. Set `hard: true` for difficulty ≥ 4: proofs, reductions, security games, constructions
+with several moving parts, probability arguments, anything abstract. A hard concept gets the full treatment:
+- `intuition` first, then the formal explanation built up in small steps, every step justified;
+- **2–3 animations**: the main `animation` plus `extra_animations` (e.g. one for the mechanism, one walking
+  through the proof or the attack, one for a worked example);
+- a **video** storyboard (see below);
+- at least one table and one figure;
+- a worked example done step by step with every intermediate value.
 
 ## Rules for recall cards
 Follow the **generating-stem-flashcards** skill: cards are atomic, use all 3 layers (recall / understanding /
@@ -38,8 +68,8 @@ boundaries) and LaTeX for maths. Every concept gets **≥ 3 cards**, with at lea
   numbers shown must be correct.
 - Set `hero_visual: true` on the 2–3 concepts per *part* that are most structural (constructions, protocols,
   pipelines). These are rendered later with the `anatomy` skill as a working machine.
-- Set `video` on the **1–3 concepts per lecture** that a short film explains best: a proof, a derivation, an
-  algorithm running, an attack unfolding. It is a storyboard for a **30–60 second** silent Manim video with
+- Set `video` on **every hard concept**, and on any other concept that a short film explains best (a proof, a
+  derivation, an algorithm running, an attack unfolding). It is a storyboard for a **30–60 second** silent Manim video with
   on-screen captions: `{"title": "...", "shots": ["shot 1: what is on screen and what moves, caption text", ...]}`
   (4–8 shots). It must add something the interactive animation does not (e.g. the whole argument end to end).
   Every other concept keeps `video: null`.

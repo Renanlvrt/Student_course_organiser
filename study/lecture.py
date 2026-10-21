@@ -317,9 +317,14 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     if target.exists():
         return log(f"{lid} visuals exist")
     i = _inputs(cfg, module, part, folder)
-    prompt = runner.build_prompt("07_lecture_page.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part,
-                                 LECTURE_ID=lid, PLAN=i["PLAN"], CONCEPTS=i["CONCEPTS"],
-                                 TEACHING=(od / f"{stem} - teaching.json").read_text(encoding="utf-8"))
+    teaching = _read_json(od / f"{stem} - teaching.json", [])
+    concepts = json.loads(i["CONCEPTS"])
+
+    def prompt_for(batch):                       # only this batch's teaching data: small input, focused output
+        return runner.build_prompt(
+            "07_lecture_page.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
+            PLAN=i["PLAN"], CONCEPTS=json.dumps([c for c in concepts if c["id"] in batch], ensure_ascii=False),
+            TEACHING=json.dumps([t for t in teaching if t.get("id") in batch], ensure_ascii=False))
     plan = json.loads(i["PLAN"]) if i["PLAN"].strip().startswith(("[", "{")) else []
     plan = plan.get("concepts", plan) if isinstance(plan, dict) else plan
     recap = {p["id"] for p in plan if isinstance(p, dict) and p.get("teach") == "recap"}
@@ -328,7 +333,7 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     def one(batch):
         focus = (f"\n\n## This call\nBuild visuals ONLY for these concept ids: {', '.join(batch)}. "
                  "Your file is one of several chunks loaded on the same page: keep every helper inside it.")
-        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
+        text, usage = runner.run(cfg, prompt_for(batch) + focus, runner=runner_name, model="sonnet", timeout=3600)
         js = block(text, "VISUALS_JS")
         log(f"{lid} visuals: {batch} ({runner.describe(usage)})")
         return [f"// ---- {', '.join(batch)}\n(function () {{\n{js}\n}})();\n"]
@@ -404,7 +409,7 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
         f" ({runner.describe(usage)})")
 
 
-TEACH_BATCH, VIS_BATCH = 5, 4
+TEACH_BATCH, VIS_BATCH = 5, 2
 
 
 def _batched(partial, ids, size, call):
@@ -427,16 +432,35 @@ def _write_json(p, data):
     Path(p).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _nlm(*a, **k):
+    from .nlm import nlm_videos
+    return nlm_videos(*a, **k)
+
+
 STEPS = {"capture": capture, "audit": audit, "registry": merge_registry, "teaching": teaching,
-         "exercises": exercises, "visuals": visuals, "videos": videos}
+         "exercises": exercises, "visuals": visuals, "videos": videos, "nlm": _nlm}
+
 
 
 def run_lecture(cfg, module, part, number, steps, runner_name="claude", log=print):
     folder = next((f for f in lecture_folders(cfg, module, part) if lecture_id(f) == "L%02d" % number), None)
     if not folder:
         raise runner.RunnerError(f"No 'Lecture {number:02d} - …' folder in {part_dir(cfg, module, part)}")
-    for s in steps:
+    serial = [s for s in steps if s not in PARALLEL]
+    for s in serial:
         result = STEPS[s](cfg, module, part, folder, runner_name=runner.pick(runner_name, s), log=log)
         if s == "audit" and result != "PASS":
             log(f"Stopping: audit verdict is {result!r}; see '{folder.name} - audit.json'.")
             return
+    # exercises, visuals and videos only need the teaching design: run them side by side
+    from concurrent.futures import ThreadPoolExecutor
+    group = [s for s in steps if s in PARALLEL]
+    with ThreadPoolExecutor(max_workers=len(group) or 1) as pool:
+        futures = {s: pool.submit(STEPS[s], cfg, module, part, folder, runner_name=runner.pick(runner_name, s), log=log)
+                   for s in group}
+    errors = {s: f.exception() for s, f in futures.items() if f.exception()}
+    if errors:
+        raise runner.RunnerError("; ".join(f"{s}: {e}" for s, e in errors.items()))
+
+
+PARALLEL = {"exercises", "visuals", "videos", "nlm"}

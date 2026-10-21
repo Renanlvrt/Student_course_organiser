@@ -193,3 +193,14 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   Gemini produced was redone with Claude: 50 page fixes (un-marked and re-fixed from the images), the notes map,
   and Lecture 1's capture / audit / registry (archived in `data/study/archive/`). Antigravity stays as an opt-in
   fallback only. The page manifest now records `fixed_by` per page.
+- **Round 8:** "it really should be flawless": animations, motion graphics and interactive modules really good,
+  for **all hard concepts** I possibly don't know; **define all the words**; **draw tables, lots of drawings**,
+  the best visual explanations; NotebookLM (cinematic) videos for niche topics; agents in parallel if faster.
+  → Teaching gains `glossary` (every term: plain + formal), `intuition`, `tables`, `figures`,
+  `extra_animations`, `difficulty`/`hard`; hard concepts get 2–3 animations, a table, a figure, a video.
+  The stepper gets **magic move** (keyed shapes glide between frames) and `Study.figure` drawings; a Glossary tab.
+  Visuals: 2 concepts per call with only their data. Exercises / visuals / videos / NotebookLM run **in
+  parallel** after teaching (separate `claude -p` processes, not subagents of the chat).
+  NotebookLM: step `nlm` via unofficial notebooklm-py; explainer format (cinematic needs AI Ultra), one
+  video per hard concept (≤ 5 per lecture), sourced from the audited Master; needs `notebooklm login` once.
+  `check` now requires glossary + figures everywhere and the full hard-concept kit.

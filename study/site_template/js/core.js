@@ -117,6 +117,46 @@
     }
   };
 
+  /* ---------------------------------------------------------------- motion: magic move between frames */
+  /* Elements carrying the same data-k in two consecutive frames glide from their old place, size, colour and
+     opacity to the new ones; new elements fade in. Frames stay plain renders, the motion comes for free. */
+  S.reducedMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  S.snapshot = function (root) {
+    const m = new Map();
+    root.querySelectorAll("[data-k]").forEach((el) => {
+      const cs = getComputedStyle(el);
+      m.set(el.getAttribute("data-k"), { r: el.getBoundingClientRect(), fill: cs.fill, stroke: cs.stroke, color: cs.color, opacity: cs.opacity });
+    });
+    return m;
+  };
+  S.morph = function (root, before, ms) {
+    if (S.reducedMotion() || !root.animate) return;
+    const dur = ms || 650, ease = "cubic-bezier(.2,.7,.2,1)";
+    root.querySelectorAll("[data-k]").forEach((el) => {
+      const old = before.get(el.getAttribute("data-k"));
+      if (!old) { el.animate([{ opacity: 0 }, { opacity: getComputedStyle(el).opacity }], { duration: dur * 0.8, easing: ease, delay: dur * 0.25, fill: "backwards" }); return; }
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      const svg = el.ownerSVGElement, k = svg && svg.getScreenCTM() ? svg.getScreenCTM().a || 1 : 1;
+      const dx = (old.r.left - r.left) / k, dy = (old.r.top - r.top) / k;
+      const sx = r.width ? old.r.width / r.width : 1, sy = r.height ? old.r.height / r.height : 1;
+      const moved = Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5 || Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01;
+      const a = {}, b = {};
+      if (moved) { a.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`; b.transform = "none"; el.style.transformOrigin = "0 0"; el.style.transformBox = "fill-box"; }
+      for (const p of ["fill", "stroke", "color", "opacity"]) if (old[p] !== cs[p]) { a[p] = old[p]; b[p] = cs[p]; }
+      if (Object.keys(a).length) el.animate([a, b], { duration: dur, easing: ease });
+    });
+  };
+
+  /* Static drawings (figures, diagrams, tables drawn in SVG): spec { title, caption, render(stage, C) } */
+  S.figure = function (spec) {
+    const stage = S.h("div", { class: "stage" });
+    const el = S.h("figure", { class: "bench drawing" }, spec.title ? S.h("header", {}, S.h("b", {}, spec.title)) : "", stage,
+      spec.caption ? S.mdEl("figcaption", spec.caption, "caption") : "");
+    try { if (spec.render) spec.render(stage, S.color()); else if (spec.svg) stage.innerHTML = spec.svg; S.math(stage); }
+    catch (e) { console.error("Figure failed:", spec.title, e); stage.append(S.h("p", { class: "placeholder" }, "This figure failed to load: " + e.message)); }
+    return el;
+  };
+
   /* ---------------------------------------------------------------- workbench: Stepper (animation) */
   /* spec: { title, note, frames: [{ caption, render(stage, C) } | { caption, svg: "<svg…>" }], autoplayMs } */
   S.stepper = function (spec) {
@@ -126,10 +166,13 @@
     let i = 0, timer = null, speed = 1;
     const frames = spec.frames || [];
     function show(n) {
+      const from = i;
       i = Math.max(0, Math.min(frames.length - 1, n));
       const f = frames[i];
+      const before = S.snapshot(stage);
       stage.replaceChildren();
       if (f.render) f.render(stage, S.color(), i); else if (f.svg) stage.innerHTML = f.svg;
+      if (from !== i) S.morph(stage, before);
       caption.innerHTML = S.md(f.caption || ""); S.math(caption); S.math(stage);
       count.textContent = (i + 1) + " / " + frames.length;
       prev.disabled = i === 0; next.disabled = i === frames.length - 1;

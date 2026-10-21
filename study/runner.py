@@ -31,7 +31,15 @@ def last_usage(cfg):
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
+_LOCK = __import__("threading").Lock()     # steps may run in parallel threads
+
+
 def _save_usage(cfg, runner, info):
+    with _LOCK:
+        _save_usage_unlocked(cfg, runner, info)
+
+
+def _save_usage_unlocked(cfg, runner, info):
     f = _usage_file(cfg)
     f.parent.mkdir(parents=True, exist_ok=True)
     data = last_usage(cfg)

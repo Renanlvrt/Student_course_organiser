@@ -10,7 +10,7 @@
   const allCards = () => Object.values(window.LECTURES || {}).flatMap((l) => (l.teaching || []).flatMap((t) =>
     (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k, concept: t.id }, c))));
   const conceptName = (id) => { for (const l of Object.values(window.LECTURES || {})) for (const c of l.concepts || []) if (c.id === id) return c.name; return id; };
-  const conceptVideo = (id) => { for (const l of Object.values(window.LECTURES || {})) for (const v of l.videos || []) if (v.concept === id) return v; return null; };
+  const conceptVideos = (id) => Object.values(window.LECTURES || {}).flatMap((l) => (l.videos || []).filter((v) => v.concept === id));
   const conceptLecture = (id) => { for (const l of Object.values(window.LECTURES || {})) if ((l.concepts || []).some((c) => c.id === id)) return l.id; return null; };
 
   /* ---------------------------------------------------------------- index.html */
@@ -52,7 +52,7 @@
     const plan = Object.fromEntries(((L.plan && (L.plan.concepts || L.plan)) || []).map((p) => [p.id, p]));
     const order = (L.concepts || []).slice().sort((a, b) => ((teach[a.id] || {}).learning_order || 99) - ((teach[b.id] || {}).learning_order || 99));
     const exs = L.exercises || [];
-    const tabs = { learn: "Learn", notes: "Full notes", cards: "Flashcards", practice: "Practice (" + exs.length + ")" };
+    const tabs = { learn: "Learn", notes: "Full notes", glossary: "Glossary", cards: "Flashcards", practice: "Practice (" + exs.length + ")" };
     const panes = {};
     const tabBar = h("div", { class: "tabs", role: "tablist" }, Object.entries(tabs).map(([k, label]) =>
       h("button", { role: "tab", "aria-selected": k === "learn" ? "true" : "false", onclick: () => select(k), "data-k": k }, label)));
@@ -70,6 +70,15 @@
         observeSeen(p);
       },
       notes(p) { p.append(h("div", { class: "read notes" }, S.mdEl("div", L.master || "Master notes not built yet."))); },
+      glossary(p) {
+        const seen = new Map();
+        for (const c of order) for (const g of (teach[c.id] || {}).glossary || []) {
+          const k = String(g.term || "").toLowerCase();
+          if (k && !seen.has(k)) seen.set(k, Object.assign({ concept: c }, g));
+        }
+        const terms = [...seen.values()].sort((a, b) => String(a.term).localeCompare(String(b.term)));
+        p.append(h("div", { class: "read" }, terms.length ? glossaryList(terms, true) : h("p", { class: "muted" }, "No glossary yet for this lecture.")));
+      },
       cards(p) {
         const cards = (L.teaching || []).flatMap((t) => (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k }, c)));
         const mount = h("div", { class: "read" }); p.append(mount); S.cardSession(cards, mount);
@@ -84,11 +93,17 @@
     if (location.hash) setTimeout(() => { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }, 50);
   }
   const cssId = (id) => "c-" + String(id).replace(/[^A-Za-z0-9_-]/g, "-");
+  function glossaryList(terms, withLinks) {
+    return h("dl", { class: "glossary" }, terms.flatMap((g) => [
+      h("dt", {}, S.mdEl("span", g.term), withLinks && g.concept ? h("a", { class: "from ui", href: "#" + cssId(g.concept.id), onclick: () => { const b = document.querySelector('.tabs [data-k="learn"]'); if (b) b.click(); } }, g.concept.name) : ""),
+      h("dd", {}, S.mdEl("div", g.plain || g.definition || ""), g.formal ? S.mdEl("div", "**Formally:** " + g.formal, "formal") : "")]));
+  }
 
   function conceptSection(c, t, pl, exs) {
     t = t || {};
     const sec = h("section", { class: "concept", id: cssId(c.id), "data-concept": c.id });
-    sec.append(h("p", { class: "kind" }, c.kind || ""), h("h2", {}, c.name));
+    const hard = t.hard || (t.difficulty || 0) >= 4;
+    sec.append(h("p", { class: "kind" }, c.kind || ""), h("h2", {}, c.name, hard ? h("span", { class: "hardtag ui" }, "Hard concept") : ""));
     const teachMode = pl ? (pl.teach || pl.action || "all") : "all";
     if (teachMode === "recap") {
       const home = pl.home || (window.REGISTRY && REGISTRY[c.id] && REGISTRY[c.id].home);
@@ -97,6 +112,8 @@
     } else {
       if (t.hook) sec.append(S.mdEl("p", t.hook, "hook"));
       if (Array.isArray(teachMode)) sec.append(S.mdEl("p", "This lecture adds: " + teachMode.join(", ") + ".", "muted ui"));
+      if ((t.glossary || []).length) sec.append(h("div", { class: "words read" }, h("p", { class: "ui label" }, "Words to know"), glossaryList(t.glossary, false)));
+      if (t.intuition) sec.append(h("div", { class: "intuition read" }, S.mdEl("div", "**The idea in plain words.** " + t.intuition)));
       sec.append(S.mdEl("div", t.explanation || c.summary || "", "read"));
       for (const a of t.analogies || []) {
         const text = typeof a === "string" ? a : a.analogy || a.text || "";
@@ -104,12 +121,14 @@
         sec.append(h("div", { class: "analogy read" }, S.mdEl("div", text), br ? S.mdEl("span", "Where it breaks: " + br, "breaks") : ""));
       }
       for (const e of t.examples || []) sec.append(h("div", { class: "example read" }, S.mdEl("div", typeof e === "string" ? e : e.text || e.example || JSON.stringify(e))));
+      for (const tb of t.tables || []) sec.append(h("div", { class: "table read" }, S.mdEl("div", typeof tb === "string" ? tb : (tb.title ? "**" + tb.title + "**\n\n" : "") + (tb.markdown || ""))));
       const vis = S.visuals[c.id] || {};
+      for (const fg of vis.figures || []) sec.append(S.figure(fg));
       if (t.animation || vis.animation) sec.append(S.stepper(Object.assign({ title: (t.animation || {}).title }, vis.animation || {})));
+      for (const an of vis.animations || []) sec.append(S.stepper(an));
       if (t.sandbox || vis.sandbox) sec.append(S.sandbox(Object.assign({ title: (t.sandbox || {}).title, challenge: (t.sandbox || {}).challenge }, vis.sandbox || {}), c.id));
-      const vid = conceptVideo(c.id);
-      if (vid) sec.append(h("figure", { class: "film" }, h("video", { src: vid.file, controls: "", playsinline: "", preload: "metadata" }),
-        h("figcaption", { class: "ui" }, "Short film: " + (vid.title || c.name))));
+      for (const vid of conceptVideos(c.id)) sec.append(h("figure", { class: "film" }, h("video", { src: vid.file, controls: "", playsinline: "", preload: "metadata" }),
+        h("figcaption", { class: "ui" }, vid.kind === "notebooklm" ? vid.title : "Short film: " + (vid.title || c.name))));
       if (t.hero_visual) sec.append(h("div", { "data-hero": c.id }));
       for (const mstk of t.misconceptions || []) sec.append(S.mdEl("div", "**Common misconception.** " + (typeof mstk === "string" ? mstk : JSON.stringify(mstk)), "mistake read"));
       for (const tip of t.exam_tips || []) sec.append(S.mdEl("div", "**Exam tip.** " + tip, "tip read"));

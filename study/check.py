@@ -38,6 +38,14 @@ def check_lecture(cfg, module, part, folder):
                 need["cards"] = f"{len(t.get('recall_cards') or [])}/3"
             if cid not in visuals:
                 need["visuals"] = "missing"
+            if not t.get("glossary"):
+                need["glossary"] = "missing"
+            if not t.get("figures"):
+                need["figures"] = "missing"
+            if t.get("hard") or (t.get("difficulty") or 0) >= 4:
+                for f in ("intuition", "extra_animations", "tables", "video"):
+                    if not t.get(f):
+                        need[f"hard: {f}"] = "missing"
         for k, n in MIN.items():
             if counts[k] < n:
                 need[k] = f"{counts[k]}/{n}"

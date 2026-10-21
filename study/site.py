@@ -42,7 +42,8 @@ def build_site(cfg, module, part, log=print):
         data = {"id": lid, "title": stem, "concepts": concepts,
                 "teaching": _read_json(od / f"{stem} - teaching.json", []),
                 "exercises": _read_json(od / f"{stem} - exercises.json", []),
-                "videos": _read_json(od / f"{stem} - videos.json", []),
+                "videos": _read_json(od / f"{stem} - videos.json", []) +
+                          _read_json(od / f"{stem} - notebooklm.json", {}).get("videos", []),
                 "plan": plan.get("concepts", plan) if isinstance(plan, dict) else plan,
                 "master": (od / f"{stem} - Master.md").read_text(encoding="utf-8") if (od / f"{stem} - Master.md").exists() else ""}
         (site / "data" / f"{lid}.js").write_text(

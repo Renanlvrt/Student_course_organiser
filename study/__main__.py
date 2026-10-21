@@ -22,7 +22,7 @@ def main(argv=None):
     lec.add_argument("module")
     lec.add_argument("part")
     lec.add_argument("number", type=int)
-    lec.add_argument("--steps", default="capture,audit,registry,teaching,exercises,visuals,videos")
+    lec.add_argument("--steps", default="capture,audit,registry,teaching,exercises,visuals,videos,nlm")
     lec.add_argument("--runner", default="claude", choices=["auto", "claude", "agy"],
                      help="claude (default): Claude Code runs every step; auto: Claude for visuals, Antigravity for the rest")
     st = sub.add_parser("site", help="Build Website/<Part>/ from the pipeline output")
