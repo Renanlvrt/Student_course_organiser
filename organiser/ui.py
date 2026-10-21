@@ -215,7 +215,7 @@ class Dashboard:
     # ------------------------------------------------------------------ data
     def _entries(self):
         today = time.strftime("%Y-%m-%d")
-        all_ = [e for e in self.core.log.recent(300) if e.get("kind") in ("download", "existing", None)
+        all_ = [e for e in self.core.log.recent(400) if e.get("kind") in ("download", "existing", "fetched", "migration", None)
                 or e["status"] == "flagged"]
         session = [e for e in all_ if self.core.session_start and e["time"] >= self.core.session_start]
         view = self.view or ("session" if session else "today")
@@ -267,7 +267,10 @@ class Dashboard:
         flagged = [e for e in entries if e["status"] == "flagged"]
         placed = [e for e in entries if e["status"] == "sorted" and self._rel(e["current_path"])]
         left = [e for e in entries if e["status"] in ("duplicate", "skipped", "undone", "error")]
+        failed = [e for e in entries if e["status"] == "failed"]
         bits = [f"{len(placed)} sorted"]
+        if failed:
+            bits.append(f"{len(failed)} failed")
         if flagged:
             bits.append(f"{len(flagged)} to check")
         if left:
@@ -280,6 +283,10 @@ class Dashboard:
             tk.Label(self.rows, text="Each file will appear here, in the folder it went to.", bg=C["bg"],
                      fg=C["off"], font=FONT_S).pack()
             return
+        if failed:
+            self._section("DOWNLOAD FAILED", len(failed), C["err"])
+            for e in failed:
+                self._fail_card(e)
         if flagged:
             self._section("NEEDS A LOOK", len(flagged), C["warn"])
             for e in flagged:
@@ -299,6 +306,25 @@ class Dashboard:
         f.pack(fill="x", padx=12, pady=(12, 4))
         tk.Label(f, text=title, bg=C["bg"], fg=colour, font=FONT_S).pack(side="left")
         tk.Label(f, text=str(n), bg=C["bg"], fg=C["off"], font=FONT_S).pack(side="left", padx=(6, 0))
+
+    # -- download failed
+    def _fail_card(self, e):
+        card = tk.Frame(self.rows, bg=C["row"])
+        card.pack(fill="x", padx=12, pady=2)
+        tk.Frame(card, bg=C["err"], width=3).pack(side="left", fill="y")
+        body = tk.Frame(card, bg=C["row"])
+        body.pack(side="left", fill="x", expand=True, padx=9, pady=6)
+        tk.Label(body, text="✕ " + short(e["original_name"], 46), bg=C["row"], fg=C["err"], font=FONT_B,
+                 anchor="w").pack(fill="x")
+        tk.Label(body, text=short(e.get("message") or "Download failed", 120), bg=C["row"], fg=C["muted"],
+                 font=FONT_S, anchor="w", justify="left", wraplength=int(380 * self.s)).pack(fill="x")
+        acts = tk.Frame(body, bg=C["row"])
+        acts.pack(fill="x", pady=(5, 0))
+        if e.get("url"):
+            FlatButton(acts, "↻ Retry", lambda: self.core.submit(self.core.retry_failed, e["id"]),
+                       bg=C["accent_dim"], font=FONT_S).pack(side="left")
+            FlatButton(acts, "Open link", lambda: os.startfile(e["url"]), bg=C["panel"], font=FONT_S).pack(
+                side="left", padx=(6, 0))
 
     # -- needs a look
     def _flag_card(self, e):
@@ -344,12 +370,11 @@ class Dashboard:
 
     def _node(self, label, node, depth):
         # Collapse single-child chains below the module: "Lectures › Algorithmic Game Theory".
-        while depth > 0 and not node["files"] and len(node["kids"]) == 1:
+        while depth > 0 and not node["files"] and len(node["kids"]) == 1 and \
+                not re.match(r"(Lecture|Practical) \d+|Readings$", next(iter(node["kids"]))):
             (name, child), = node["kids"].items()
             label, node = f"{label} › {name}", child
         key = node["path"]
-        if depth > 1 and not node["kids"] and len(node["files"]) == 1:
-            return self._file(node["files"][0], depth, folder=None)   # one-file folder: one row
         open_ = key not in self.collapsed
         row = tk.Frame(self.rows, bg=C["bg"])
         row.pack(fill="x", padx=(12 + int(16 * depth * self.s), 12), pady=(3 if depth == 0 else 1, 0))
@@ -399,6 +424,11 @@ class Dashboard:
                        anchor="w", cursor="hand2")
         lab.pack(side="left")
         lab.bind("<Button-1>", lambda ev: open_in_explorer(e["current_path"]))
+        pdf = next((x for x in e.get("extras", []) if x.lower().endswith(".pdf") and Path(x).exists()), None)
+        if pdf:                                           # printable copy of a notebook
+            p = tk.Label(row, text="+ PDF", bg=C["bg"], fg=C["accent"], font=FONT_S, cursor="hand2")
+            p.pack(side="left", padx=(6, 0))
+            p.bind("<Button-1>", lambda ev: open_in_explorer(pdf))
         acts = tk.Frame(row, bg=C["bg"])
         self._link(acts, "move", lambda: self.open_editor(e["id"]), C["accent"])
         self._link(acts, "undo", lambda: self.core.submit(self.core.undo, e["id"]), C["muted"])

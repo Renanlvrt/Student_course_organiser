@@ -57,6 +57,23 @@ class Rules(unittest.TestCase):
         self.assertTrue(placer._needs_name("Practical", "Practical 03"))
         self.assertFalse(placer._needs_name("Lecture", "Lecture 01 - Introduction"))
 
+    def test_blackboard_lines(self):
+        cfg = load_config()
+        base = {"course_code": "COMP3801", "chain": ["Practicals", "Deep Learning"]}
+        ans = classify(cfg, "dl-answers1.pdf", "", "", use_ai=False,
+                       context={**base, "item_title": "Practical 1: NCC/Colab setup", "link_text": "answers"})
+        self.assertEqual((ans.category, ans.number, ans.relates_to), ("Solutions", 1, "Practicals"))
+        mock = classify(cfg, "dl-practical10.pdf", "", "", use_ai=False,
+                        context={**base, "item_title": "Practical 10: Mock exam and Q&A", "link_text": "pdf"})
+        self.assertEqual((mock.category, mock.number), ("Practicals", 10))
+        from organiser import notebooks
+        self.assertEqual(notebooks.raw_url("https://colab.research.google.com/gist/cwkx/abc123/unet.ipynb"),
+                         "https://gist.githubusercontent.com/cwkx/abc123/raw/unet.ipynb")
+        self.assertIsNone(notebooks.raw_url("https://colab.research.google.com/drive/1XyZ"))
+        self.assertEqual(rules.clean_topic(rules.citation_title(
+            "He, K., Zhang, X. (2016). Deep residual learning for image recognition. In CVPR")),
+            "Deep Residual Learning for Image Recognition")
+
     def test_part_label(self):
         cfg = load_config()
         crypto = cfg.module("Crypto")

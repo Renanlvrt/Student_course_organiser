@@ -151,6 +151,18 @@ FILE_EXT_RE = re.compile(r"\.(pdf|pptx?|docx?|ipynb|py|zip|txt|md|csv|c|h)$", re
 JUNK_TITLE_RE = re.compile(r"^(ultra\s*document\s*body|untitled|document|file|attachment|download)\b", re.I)
 
 
+def citation_title(s):
+    """Paper title from a reference: 'X, "Title," in ...' or 'X (2016). Title. In ...'."""
+    s = s or ""
+    m = re.search(r'[“"]([^”"]{8,}?)[,.]?[”"]', s)
+    if m:
+        return m.group(1).strip(" ,.")
+    m = re.search(r"\(\d{4}[a-z]?(?:,[^)]*)?\)\.\s*(.{8,}?)(?:\.\s|\.$|\?\s|$)", s)
+    if m:
+        return m.group(1).strip(" ,.")
+    return ""
+
+
 def is_junk_title(s):
     """Blackboard internal names such as 'ultraDocumentBody Copy' are not real titles."""
     s = (s or "").strip()

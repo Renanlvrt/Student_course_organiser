@@ -81,7 +81,10 @@ async function scan() {
       <ul>${res.skipped.slice(0, 40).map((k) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span></li>`).join("")}</ul></details>` : ""}`;
   $("go") && $("go").addEventListener("click", async () => {
     $("go").disabled = true;
-    await chrome.runtime.sendMessage({ type: "startQueue", files: found });
+    // Sheets and slides first, notebooks/code last, so practical folders exist when code arrives.
+    const isCode = (f) => /\.(ipynb|py|zip)(\?|$)/i.test(f.fileName || f.url);
+    const ordered = found.filter((f) => !isCode(f)).concat(found.filter(isCode));
+    await chrome.runtime.sendMessage({ type: "startQueue", files: ordered });
   });
 }
 
@@ -100,7 +103,7 @@ function renderQueue(q) {
   box.innerHTML = q.running
     ? `<progress max="${total}" value="${q.index}"></progress><div class="muted">Downloading ${Math.min(q.index + 1, total)}/${total}, one at a time…</div>
        <button class="secondary" id="cancel">Stop</button>`
-    : `<div class="muted" style="margin-top:8px">Finished ${total} download(s)${q.failed ? `, ${q.failed} failed` : ""}.</div>
+    : `<div class="muted" style="margin-top:8px">Finished ${total} download(s)${q.failed ? `, <b style="color:var(--err)">${q.failed} FAILED</b> (open the recap to retry)` : ""}.</div>
        <button id="recap">See where they went</button>`;
   const rb = $("recap");
   if (rb) rb.onclick = async () => {

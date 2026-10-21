@@ -129,15 +129,55 @@ chrome.downloads.onChanged.addListener(async (delta) => {
   const isCurrent = q && q.running && (q.currentId === delta.id ||
     (!q.currentId && ctx && q.files[q.index] && ctx.key === q.files[q.index].key));
   if (isCurrent) {
-    const f = q.files[q.index];
-    q.done = (q.done || []).concat([{ name: f.fileName, path: finalPath, ok: state === "complete" }]);
-    q.index += 1;
     q.currentId = null;
-    if (state === "interrupted") q.failed = (q.failed || 0) + 1;
     await setS("queue", q);
-    setTimeout(nextInQueue, GAP_MS);
+    if (state === "complete") {
+      await settle(q, { ok: true, path: finalPath });
+    } else {
+      const [it] = await chrome.downloads.search({ id: delta.id });
+      await failed(q, (it && it.error) || "INTERRUPTED");
+    }
   }
 });
+
+// A finished queue item: record it and move on.
+async function settle(q, result) {
+  const f = q.files[q.index];
+  q.done = (q.done || []).concat([{ name: f.fileName || (f.ctx && f.ctx.link_text) || "file", ...result,
+                                    ...(result.ok ? {} : { url: f.url, key: f.key, ctx: f.ctx }) }]);
+  if (!result.ok) q.failed = (q.failed || 0) + 1;
+  q.index += 1;
+  q.currentId = null;
+  await setS("queue", q);
+  setTimeout(nextInQueue, GAP_MS);
+}
+
+// Browser download failed: retry twice, then ask the organiser to fetch it, then report it clearly.
+async function failed(q, reason) {
+  const f = q.files[q.index];
+  f.attempts = (f.attempts || 0) + 1;
+  if (f.attempts <= 2) {
+    await setS("queue", q);
+    setTimeout(nextInQueue, 2500 * f.attempts);
+    return;
+  }
+  try {
+    const r = await (await fetch(APP + "/fetch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: f.url, name: /\.[a-z0-9]{1,5}$/i.test(f.fileName || "") ? f.fileName : null,
+                             ctx: { ...f.ctx, key: f.key } }),
+    })).json();
+    if (r.ok) {
+      const done = (await local.get("downloaded")).downloaded || {};
+      done[f.key] = Date.now();
+      await local.set({ downloaded: done });
+      return settle(q, { ok: true, path: r.entry.original_path, via: "organiser" });
+    }
+    return settle(q, { ok: false, error: `${reason}; organiser retry: ${r.error}` });
+  } catch (e) {
+    return settle(q, { ok: false, error: `${reason} (organiser not running)` });
+  }
+}
 
 // ---- "download all new files" queue -------------------------------------------------
 // Save this batch and show where every file went.
@@ -183,10 +223,6 @@ async function nextInQueue() {
       await setS("queue", now);
     }
   } catch (e) {
-    q.done = (q.done || []).concat([{ name: f.fileName, path: null, ok: false, error: String(e && e.message || e) }]);
-    q.index += 1;
-    q.failed = (q.failed || 0) + 1;
-    await setS("queue", q);
-    setTimeout(nextInQueue, GAP_MS);
+    await failed(q, String(e && e.message || e));
   }
 }

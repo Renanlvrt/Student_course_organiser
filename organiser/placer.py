@@ -18,6 +18,7 @@ from .rules import CODE_EXTS, clean_stem, is_junk_title
 PREFIX = {"Lectures": "Lecture", "Practicals": "Practical", "Solutions": "Solutions"}
 FOLDERED = {"Lectures": "Lecture", "Practicals": "Practical"}
 ATTACHED = {"Solutions": "Solutions"}
+DOC_EXTS = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".html", ".htm", ".md", ".txt", ".odt", ".odp"}
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__"}
 
 
@@ -79,7 +80,8 @@ def find_numbered_folder(folder, prefix, n):
 def _needs_name(prefix, name):
     """'Practical 03' (created by a code file) or 'Lecture 01 - ultraDocumentBody Copy' get the real topic."""
     m = re.fullmatch(rf"{prefix} \d+(?: - (.*))?", name)
-    return bool(m) and (m.group(1) is None or is_junk_title(m.group(1)))
+    return bool(m) and (m.group(1) is None or is_junk_title(m.group(1))
+                        or bool(re.fullmatch(r"(answers?|solutions?)( \d+)?", m.group(1), re.I)))
 
 
 def find_practical_folder(folder, n):
@@ -93,7 +95,11 @@ def plan(cfg, c, src_name, is_dir=False, bundle_hint=None):
     folder = category_dir(cfg, c)
     ext = "" if is_dir else Path(src_name).suffix.lower()
     orig_ext = "" if is_dir else Path(src_name).suffix
-    is_code = ext in CODE_EXTS
+    # Only documents get renamed after their topic; code, notebooks and unknown types keep their name
+    # (minus the browser's " (1)" suffix).
+    is_code = not is_dir and ext not in DOC_EXTS
+    if is_code:
+        src_name = clean_stem(src_name) + orig_ext
     topic = c.topic
 
     if c.category in FOLDERED:

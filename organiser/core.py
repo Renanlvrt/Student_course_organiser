@@ -17,6 +17,7 @@ from watchdog.observers import Observer
 
 from . import placer, rules
 from .classify import Classification, classify, part_needed
+from . import notebooks
 from .config import ensure_skeleton
 from .extract import ExtractError, extract
 from .store import Log, State
@@ -310,15 +311,18 @@ class Organiser:
         ctx = self.get_context(src, wait=wait)
         return self.process_file(src, pick, ctx, kind="download")
 
+    def in_layout(self, path):
+        """True if path is a proper new-layout location (Module/Lectures|Practicals|Other|Website/...)."""
+        try:
+            rel = Path(path).relative_to(self.cfg.root_folder).parts
+        except ValueError:
+            return False
+        return len(rel) >= 3 and self.cfg.module(rel[0]) is not None and \
+            rel[1] in ("Lectures", "Practicals", "Other", "Website")
+
     def process_file(self, src, pick=(None, None), ctx=None, kind="download", when=None):
         src = Path(src)
-        dup = None if src.is_dir() else self.dups.find(src)
-        if dup:
-            e = self.log.add(kind=kind, status="duplicate", original_path=str(src), current_path=str(src),
-                             duplicate_of=dup, original_name=src.name, classification={},
-                             message="Already have it - left in Downloads")
-            self.notify("Already have it", f"{src.name}\n= {Path(dup).name}")
-            return e
+        src = self._repair_notebook(src, ctx)
         text, title, error = "", "", None
         try:
             text, title = extract(src)
@@ -328,11 +332,135 @@ class Organiser:
             when = datetime.now() if kind == "download" else datetime.fromtimestamp(src.stat().st_mtime)
         c = classify(self.cfg, src.name, text, title, context=ctx, manual_module=pick[0],
                      manual_part=pick[1], error=error, when=when)
+        dup = None if src.is_dir() else self.dups.find(src)
+        if dup:
+            if self._already_in_place(dup, c, src):
+                if kind == "fetched":
+                    src.unlink(missing_ok=True)   # our own background fetch of something we already have
+                    return None
+                binned = self._to_bin(src)        # discard the new copy (kept in Bin, never deleted)
+                e = self.log.add(kind=kind, status="duplicate", original_path=str(src), current_path=str(binned),
+                                 duplicate_of=dup, original_name=src.name, classification=c.to_dict(),
+                                 context=ctx, message=f"Already in {self.short_dest(dup)}")
+                self.notify("Already have it", f"{src.name}\nin {self.short_dest(dup)}")
+                return e
+            # We have it, but in the wrong place: this copy goes to the right folder, the stray one to the Bin.
+            self._retire_stray(dup)
         if c.not_course and not pick[0] and not ctx:
             return self.log.add(kind=kind, status="skipped", original_path=str(src), current_path=str(src),
                                 original_name=src.name, classification=c.to_dict(), text=text[:3000],
                                 title=title, context=ctx, message="Not course material - left in Downloads")
         return self._place(src, c, kind=kind, text=text, title=title, ctx=ctx)
+
+    def _already_in_place(self, dup, c, src):
+        """Is the existing identical copy where this file belongs (or right next to it)?"""
+        if not self.in_layout(dup):
+            return False
+        owner = self._owner(dup)
+        if owner and "Fixed by you" in (owner.get("message") or ""):
+            return True                          # you put it there yourself
+        owner_src = ((owner or {}).get("classification") or {}).get("sources", {}).get("module")
+        if owner_src == "blackboard" and c.sources.get("module") != "blackboard":
+            return True                          # placed with Blackboard's exact course info: trust it
+        if not placer.is_confident(self.cfg, c):
+            return True                          # we don't know better than where it already is
+        home = placer.category_dir(self.cfg, c)  # e.g. DLCV/Lectures/Deep Learning (any lecture folder in it)
+        try:
+            Path(dup).relative_to(home)
+            return True
+        except ValueError:
+            return False
+
+    def _owner(self, path):
+        return next((e for e in reversed(self.log.entries)
+                     if norm(e.get("current_path", "")) == norm(path) and e["status"] in ("sorted", "flagged")), None)
+
+    def _to_bin(self, path):
+        bin_dir = self.cfg.root_folder.parent / "Bin" / "organiser-duplicates"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        self.dups.remove(path)
+        return placer.move(path, bin_dir / Path(path).name)
+
+    def _retire_stray(self, dup):
+        owner = self._owner(dup)
+        old_parent = Path(dup).parent
+        binned = self._to_bin(dup)
+        placer.remove_if_empty_practical(old_parent)
+        if owner:
+            self.log.update(owner["id"], status="duplicate", current_path=str(binned),
+                            message="Wrong place: newer copy sorted, this one moved to Bin")
+        log.info("stray duplicate %s moved to Bin", dup)
+
+    def _repair_notebook(self, src, ctx):
+        """A '.ipynb' that is really a Colab web page: fetch the real notebook instead."""
+        if src.suffix.lower() != ".ipynb" or not src.is_file() or notebooks.is_notebook(src):
+            return src
+        raw = notebooks.raw_url((ctx or {}).get("url", ""))
+        if not raw:
+            return src
+        try:
+            good = notebooks.fetch(raw, src.parent, name=src.stem + ".nb-download.tmp")
+            junk_dir = self.cfg.root_folder.parent / "Bin" / "organiser-replaced"
+            junk_dir.mkdir(parents=True, exist_ok=True)
+            final = src
+            self.suppress(src)
+            placer.move(src, junk_dir / src.name)
+            os.replace(good, final)
+            log.info("replaced Colab page %s with the real notebook", src.name)
+            return final
+        except Exception as ex:
+            log.warning("could not fetch real notebook for %s: %s", src.name, ex)
+            return src
+
+    def _retarget_code(self, c, ctx, src):
+        """Notebooks linked from a lecture line go to the practical on the same topic, if there is one."""
+        mod = self.cfg.module(c.module)
+        if not mod or c.part is None or not mod.parts:
+            return
+        pdir = self.cfg.root_folder / mod.key / "Practicals" / mod.parts[c.part]
+        want = _tokens(rules.clean_topic((ctx or {}).get("item_title") or "")) | _tokens(src.stem)
+        best, best_score = None, 0
+        for d in (pdir.iterdir() if pdir.is_dir() else []):
+            m = re.match(r"Practical (\d+)(?: - (.*))?$", d.name)
+            if d.is_dir() and m:
+                score = len(want & _tokens(m.group(2) or ""))
+                if score > best_score:
+                    best, best_score = int(m.group(1)), score
+        if best is not None and best_score >= 2:
+            c.category, c.number = "Practicals", best
+            c.sources["category"] = "matched practical"
+
+    def _fetch_linked_notebooks(self, entry_id):
+        """Slides/practical PDFs often link Colab notebooks: download those too."""
+        e = self.log.get(entry_id)
+        if not e or e["status"] != "sorted" or not e["current_path"].lower().endswith(".pdf"):
+            return
+        c = Classification.from_dict(e.get("classification"))
+        mod = self.cfg.module(c.module) if c.module else None
+        if not mod:
+            return
+        urls = notebooks.links_in_pdf(e["current_path"])
+        have = {p.name.lower() for p in (self.cfg.root_folder / mod.key).rglob("*.ipynb")}
+        ctx = dict(e.get("context") or {})
+        ctx.setdefault("course_code", mod.code)
+        ctx.setdefault("course_name", mod.name)
+        if c.part is not None and mod.parts and not ctx.get("chain"):
+            ctx["chain"] = [mod.parts[c.part]]
+        if c.number and c.category in ("Lectures", "Practicals"):
+            ctx["item_title"] = f"{c.category[:-1]} {c.number}: {c.topic}"
+        for url in urls:
+            name = url.rstrip("/").split("/")[-1]
+            if not name.lower().endswith(".ipynb") or name.lower() in have:
+                continue
+            try:
+                path = notebooks.fetch(url, self.cfg.downloads_folder)
+            except Exception as ex:
+                log.warning("linked notebook %s failed: %s", url, ex)
+                continue
+            self.suppress(path)
+            self.process_file(path, (None, None), {**ctx, "link_text": "", "url": url, "source": "pdf link"},
+                              kind="fetched")
+            have.add(name.lower())
 
     def _bundle_hint(self, c):
         hint = self._last_practical.get((c.module, c.part))
@@ -342,6 +470,9 @@ class Organiser:
 
     def _place(self, src, c, kind, text="", title="", ctx=None, entry=None, extract_zips=True):
         src = Path(src)
+        if ctx and c.category == "Lectures" and src.suffix.lower() in (".ipynb", ".py") \
+                and c.sources.get("category") != "user":
+            self._retarget_code(c, ctx, src)
         pl = placer.plan(self.cfg, c, src.name, is_dir=src.is_dir(), bundle_hint=self._bundle_hint(c))
         if pl.rename_folder and placer.apply_folder_rename(pl.rename_folder):
             self.log.repath(pl.rename_folder[0], pl.rename_folder[1])
@@ -356,6 +487,11 @@ class Organiser:
                 extras.append(str(placer.extract_zip(dest)))
             except Exception as ex:
                 flags.append(f"zip not extracted: {ex}")
+        if dest.suffix.lower() == ".ipynb" and not pl.unsorted and notebooks.is_notebook(dest):
+            pdf = notebooks.to_pdf(dest)              # printable copy next to the notebook
+            if pdf:
+                extras.append(str(pdf))
+                self.dups.add(pdf)
         if c.category == "Practicals" and not pl.unsorted:
             folder = dest if dest.is_dir() else dest.parent
             if folder.name.startswith("Practical "):
@@ -374,7 +510,33 @@ class Organiser:
             self.notify("Needs a check", f"{src.name} -> _Unsorted ({e['message']})")
         elif kind == "download":
             self.notify(f"Sorted: {dest.name}"[:60], self.short_dest(dest))
+        if not pl.unsorted and dest.suffix.lower() == ".pdf" and c.category in ("Lectures", "Practicals"):
+            self.submit(self._fetch_linked_notebooks, e["id"])
         return e
+
+    # ---------------------------------------------------------------- failed downloads
+    def fetch_url(self, url, name=None, ctx=None):
+        """Download a URL ourselves (fallback when the browser failed). Logs a clear failure otherwise."""
+        try:
+            path = notebooks.fetch(notebooks.raw_url(url) or url, self.cfg.downloads_folder, name=name)
+        except Exception as ex:
+            err = _friendly_error(ex)
+            self.log.add(kind="download", status="failed", original_path="", current_path="",
+                         original_name=name or url.rstrip("/").split("/")[-1], classification={},
+                         context=ctx, url=url, message=f"Download failed: {err}")
+            self.notify("Download failed", f"{name or url}\n{err}")
+            return None, err
+        self.suppress(path)
+        e = self.process_file(path, (None, None), {**(ctx or {}), "path": str(path), "url": url}, kind="download")
+        return e, None
+
+    def retry_failed(self, entry_id):
+        e = self.log.get(entry_id)
+        if not e or e["status"] != "failed":
+            return None
+        self.log.update(entry_id, status="retried", message="Retried")
+        r, err = self.fetch_url(e.get("url") or "", e.get("original_name"), e.get("context"))
+        return r
 
     def short_dest(self, path):
         try:
@@ -559,3 +721,24 @@ def _remove_empty_tree(root):
                 os.rmdir(dirpath)
         except OSError:
             pass
+
+
+_STOP = {"and", "the", "for", "with", "from", "into", "model", "models", "lecture", "practical", "notebook",
+         "colab", "ipynb", "minimal", "simple", "intro", "introduction", "part", "using", "based"}
+
+
+def _friendly_error(ex):
+    import requests
+    if isinstance(ex, requests.HTTPError) and ex.response is not None:
+        r = ex.response
+        hint = " (needs your Blackboard login: retry from the extension)" if r.status_code in (401, 403) else ""
+        return f"HTTP {r.status_code} {r.reason}{hint}"
+    if isinstance(ex, requests.Timeout):
+        return "the server took too long to answer"
+    if isinstance(ex, requests.ConnectionError):
+        return "could not connect to the server"
+    return str(ex)[:160]
+
+
+def _tokens(s):
+    return {w for w in re.findall(r"[a-z]+", (s or "").lower()) if len(w) >= 3 and w not in _STOP}

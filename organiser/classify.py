@@ -125,7 +125,16 @@ def classify(cfg, filename, text="", title="", context=None, manual_module=None,
     cat_candidates = [(item_title, 0.0, "blackboard"), (stem, 0.0, "filename")]
     cat_candidates += [(s, 0.1, "blackboard") for s in chain]
     cat_candidates += [(title, 0.1, "title"), ((text or "")[:300], 0.2, "text")]
-    for s, penalty, src in cat_candidates:
+    # Strongest signals first: the link's own text ("answers" next to Practical 3) and an explicit
+    # "Practical 10: Mock exam" / "Lecture 4: ..." line, which beats keywords like "exam".
+    link_cat = rules.category_from_text(ctx.get("link_text") or "")[0]
+    lead = re.match(r"\s*(lectures?|practicals?|labs?|tutorials?|workshops?)\s*\d", item_title, re.I)
+    if link_cat in ("Solutions", "Readings"):
+        c.category, conf["category"], c.sources["category"] = link_cat, 0.95, "blackboard"
+    elif lead:
+        c.category = "Lectures" if lead.group(1).lower().startswith("lecture") else "Practicals"
+        conf["category"], c.sources["category"] = 0.95, "blackboard"
+    for s, penalty, src in ([] if c.category else cat_candidates):
         cat, cc = rules.category_from_text(s)
         if cat:
             c.category, conf["category"], c.sources["category"] = cat, cc - penalty, src
@@ -178,7 +187,13 @@ def classify(cfg, filename, text="", title="", context=None, manual_module=None,
     # A page link like "Lecture 10: Generalisation theory (slides, K(x), proof)": the slides take the
     # lecture's topic, the other links are named after their own text ("Proof").
     link = rules.clean_topic(ctx.get("link_text") or "")
-    if link and link.lower() not in GENERIC_LINKS and c.sources.get("topic") != "user":
+    if c.category == "Readings":
+        # Papers: use the paper title from the citation (or the PDF's own title), not the author list.
+        t = rules.citation_title(ctx.get("item_title") or "") or rules.citation_title(ctx.get("link_text") or "")
+        if t or (title and len(title) > 8):
+            c.topic = rules.clean_topic(t or title, max_len=90)
+    elif link and link.lower() not in GENERIC_LINKS and c.category != "Solutions" \
+            and c.sources.get("topic") != "user":
         c.topic = link
 
     # Assessment / Exam Prep / Other live at module level unless a part was stated explicitly.

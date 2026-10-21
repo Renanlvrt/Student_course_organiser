@@ -110,6 +110,26 @@ def make_server(core, port):
                 if isinstance(r, str) or r is None:
                     return self._send(200, {"ok": False, "error": r or "not found"})
                 return self._send(200, {"ok": True, "entry": _entry_view(core, r)})
+            if self.path in ("/fetch", "/retry"):
+                # /fetch: the browser could not download it, try ourselves. /retry: a logged failure.
+                done, box = threading.Event(), {}
+
+                def job():
+                    try:
+                        if self.path == "/fetch":
+                            box["r"], box["err"] = core.fetch_url(str(data.get("url", "")), data.get("name") or None,
+                                                                  _clean_ctx(data.get("ctx") or {}))
+                        else:
+                            box["r"] = core.retry_failed(str(data.get("id", "")))
+                    finally:
+                        done.set()
+                core.submit(job)
+                if not done.wait(120):
+                    return self._send(504, {"error": "timed out"})
+                r = box.get("r")
+                if not r or r.get("status") == "failed":
+                    return self._send(200, {"ok": False, "error": box.get("err") or (r or {}).get("message", "failed")})
+                return self._send(200, {"ok": True, "entry": _entry_view(core, r)})
             if self.path == "/undo":
                 done, box = threading.Event(), {}
 
@@ -142,8 +162,8 @@ def _clean_ctx(d):
         "course_name": s(d.get("course_name"), 200),
         "chain": [s(x, 200) for x in (d.get("chain") or [])][:12],
         "prev_chain": [s(x, 200) for x in (d.get("prev_chain") or [])][:12],
-        "item_title": s(d.get("item_title"), 200),
-        "link_text": s(d.get("link_text"), 120),
+        "item_title": s(d.get("item_title"), 400),
+        "link_text": s(d.get("link_text"), 400),
         "source": s(d.get("source"), 20),
     }
 

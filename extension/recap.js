@@ -116,13 +116,20 @@ function render(pending) {
   let html = `<ul class="tree">${renderKids(root)}</ul>`;
   const stayedList = entries.filter((e) => !e.rel);
   if (stayedList.length) html += `<div class="group">Left in Downloads</div><ul class="tree">${stayedList.map(fileRow).join("")}</ul>`;
-  const failedList = batch.done.filter((d) => !d.ok);
-  if (failedList.length) {
-    html += `<div class="group">Failed downloads</div><ul class="tree">${failedList.map((d) =>
-      `<li><div class="file" style="cursor:default"><span class="dot" style="color:var(--err)">●</span>${esc(d.name)}
-       <span class="was">${esc(d.error || "download failed - scan again to retry")}</span></div></li>`).join("")}</ul>`;
+  // Failures go first, in red, each with a Retry button.
+  const failedIdx = batch.done.map((d, i) => (d.ok ? -1 : i)).filter((i) => i >= 0);
+  if (failedIdx.length) {
+    html = `<div class="failbox"><div class="failhead">✕ ${failedIdx.length} download${failedIdx.length > 1 ? "s" : ""} failed
+        <button class="retry-all">Retry all</button></div>${failedIdx.map((i) => {
+      const d = batch.done[i];
+      return `<div class="failrow"><b>${esc(d.name)}</b><span>${esc(d.error || "download failed")}</span>
+        ${d.url ? `<button class="retry" data-idx="${i}">Retry</button>` : `<span>scan again to retry</span>`}</div>`;
+    }).join("")}</div>` + html;
   }
   $("tree").innerHTML = html;
+  for (const b of document.querySelectorAll("button.retry")) b.onclick = () => retry([parseInt(b.dataset.idx, 10)], b);
+  const all = document.querySelector("button.retry-all");
+  if (all) all.onclick = () => retry(failedIdx.filter((i) => batch.done[i].url), all);
   wire();
 }
 
@@ -206,6 +213,44 @@ async function move(id, target) {
   const r = await api("/move", body);
   if (r.ok) toast(`Moved to ${r.entry.where}`);
   else toast(r.error === "need_part" ? "Pick a part for that type" : `Couldn't move: ${r.error}`);
+  await refresh();
+}
+
+// Retry failed downloads: first in the browser (has your Blackboard login), then via the organiser.
+async function retry(indexes, button) {
+  button.disabled = true;
+  button.textContent = "Retrying…";
+  for (const i of indexes) {
+    const d = batch.done[i];
+    let ok = false, err = d.error;
+    try {
+      const id = await chrome.downloads.download({ url: d.url, conflictAction: "uniquify", saveAs: false });
+      ok = await new Promise((res) => {
+        const h = (delta) => {
+          if (delta.id !== id || !delta.state) return;
+          if (delta.state.current === "complete" || delta.state.current === "interrupted") {
+            chrome.downloads.onChanged.removeListener(h);
+            res(delta.state.current === "complete");
+          }
+        };
+        chrome.downloads.onChanged.addListener(h);
+      });
+      if (ok) {
+        const [it] = await chrome.downloads.search({ id });
+        d.path = it.filename;
+        await api("/context", { ...(d.ctx || {}), path: it.filename, url: d.url });
+      }
+    } catch (e) { err = String(e && e.message || e); }
+    if (!ok) {
+      const r = await api("/fetch", { url: d.url, name: null, ctx: d.ctx || {} });
+      ok = r.ok;
+      if (ok) d.path = r.entry.original_path; else err = r.error;
+    }
+    Object.assign(d, ok ? { ok: true, error: undefined } : { error: `still failing: ${err}` });
+  }
+  await chrome.storage.local.set({ lastBatch: batch });
+  toast("Retry finished");
+  pollUntil = Date.now() + 60000;
   await refresh();
 }
 

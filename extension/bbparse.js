@@ -3,7 +3,7 @@
 //   <li>Lecture 3: Designing architectures (<a href="…/dl-lecture3.pdf">slides</a>, <a href="…">encoder</a>)</li>
 (function (root) {
   const FILE_RX = /\.(pdf|pptx?|docx?|ipynb|py|zip|txt|md|csv|c|h)(?:$|[?#])/i;
-  const clean = (s) => (s || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim().slice(0, 400);   // full citations
 
   // Turn a link into something chrome.downloads can fetch, or null if it is a web page.
   function toDownloadable(href, origin) {
@@ -11,7 +11,11 @@
     try { u = new URL(href, origin); } catch (e) { return null; }
     if (!/^https?:$/.test(u.protocol)) return null;
     if (/bbcswebdav|\/attachments\/.+\/download/.test(u.pathname)) return u.href;
-    let m = u.href.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+?)(?:[?#].*)?$/);
+    // Colab pages are web apps, not files: use the notebook behind them (gist / GitHub), else skip.
+    let m = u.href.match(/^https:\/\/colab\.research\.google\.com\/gist\/([^/]+)\/([0-9a-f]+)\/([^?#]+\.ipynb)/);
+    if (m) return `https://gist.githubusercontent.com/${m[1]}/${m[2]}/raw/${m[3]}`;
+    if (/^colab\.research\.google\.com$/.test(u.hostname) && !/\/github\//.test(u.pathname)) return null;
+    m = u.href.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+?)(?:[?#].*)?$/);
     if (m && FILE_RX.test(m[3])) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
     m = u.href.match(/^https:\/\/colab\.research\.google\.com\/github\/([^/]+)\/([^/]+)\/blob\/(.+?)(?:[?#].*)?$/);
     if (m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
@@ -23,8 +27,20 @@
   function lineOf(a) {
     const block = a.closest("li, p, tr, h1, h2, h3, h4, h5, dd, dt") || a.parentElement;
     let t = clean(block ? block.textContent : "");
-    t = t.replace(/\s*\(.*\)\s*$/, "").replace(/[:\-–\s]+$/, "");   // "(slides, K(x), proof)"
-    return t;
+    // Drop a trailing "(slides, K(x), proof)" link list, but keep "(pp. 770-778)" in a citation.
+    const texts = [...(block ? block.querySelectorAll("a") : [])].map((x) => clean(x.textContent)).filter(Boolean);
+    if (t.endsWith(")")) {
+      let depth = 0;
+      for (let i = t.length - 1; i >= 0; i--) {
+        if (t[i] === ")") depth++;
+        else if (t[i] === "(" && --depth === 0) {
+          const group = t.slice(i);
+          if (texts.some((x) => x.length < group.length && group.includes(x))) t = t.slice(0, i);
+          break;
+        }
+      }
+    }
+    return t.replace(/[:\-–\s]+$/, "");
   }
 
   function fileNameFor(a, url) {

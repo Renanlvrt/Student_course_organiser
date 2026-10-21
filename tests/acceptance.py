@@ -187,8 +187,9 @@ def main(work=None):
     shutil.copy(e7["current_path"], downloads / "slides (1).pdf.tmpcopy")
     os.replace(downloads / "slides (1).pdf.tmpcopy", downloads / "slides (1).pdf")
     e8 = wait_for(lambda: latest(core, "slides (1).pdf"))
-    check("8 identical re-download is detected and left in Downloads",
-          e8 and e8["status"] == "duplicate" and (downloads / "slides (1).pdf").exists())
+    check("8 re-download of a file already in its right place -> discarded to Bin (one copy kept)",
+          e8 and e8["status"] == "duplicate" and not (downloads / "slides (1).pdf").exists()
+          and Path(e8["current_path"]).parent.name == "organiser-duplicates" and Path(e7["current_path"]).exists())
 
     # practical bundle: code first, then sheet ---------------------------
     core.set_pick("DLCV", 0)
@@ -257,6 +258,65 @@ def main(work=None):
           len(tax["modules"]) == 6 and ent["rel"][:3] == ["Crypto", "Lectures", "Asymmetric Cryptography"] and
           mv.get("ok") and mv["entry"]["rel"][:4] == ["Crypto", "Practicals", "Asymmetric Cryptography", mv["entry"]["rel"][3]]
           and mv["entry"]["rel"][3].startswith("Practical 04"), mv.get("entry", {}).get("rel"))
+
+    # duplicate whose only copy is in an OLD-layout folder still gets sorted properly ----
+    old = root / "DL" / "Lec"
+    old.mkdir(parents=True)
+    make_pdf(old / "dl-lecture1.pdf", "Deep Learning Lecture 1", "Introduction to deep learning")
+    core.dups.add(old / "dl-lecture1.pdf")
+    core.activate("DLCV", 0)
+    shutil.copy(old / "dl-lecture1.pdf", downloads / "dl-lecture1.pdf.tmpcopy")
+    os.replace(downloads / "dl-lecture1.pdf.tmpcopy", downloads / "dl-lecture1.pdf")
+    eo = wait_for(lambda: latest(core, "dl-lecture1.pdf"), 90)
+    check("15 'already have it' in an old folder -> sorted into the new layout, stray copy to Bin",
+          eo and eo["status"] == "sorted" and rel(cfg, eo["current_path"]).startswith("DLCV/Lectures/Deep Learning/Lecture 01")
+          and not (old / "dl-lecture1.pdf").exists(), eo and rel(cfg, eo["current_path"]))
+
+    # same file already sorted but into the WRONG module -> moved to the right place, one copy --
+    core.set_pick(None, None)
+    wrong = root / "AADS" / "Other" / "stray.pdf"
+    wrong.parent.mkdir(parents=True, exist_ok=True)
+    make_pdf(wrong, "Stream ciphers", "Lecture 5 stream ciphers")
+    core.dups.add(wrong)
+    req = urllib.request.Request(base + "/context", method="POST", headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"path": str(downloads / "crypto5.pdf"), "course_code": "COMP3731_2026",
+                                                  "chain": ["Part 1: Symmetric Cryptography"],
+                                                  "item_title": "Lecture 5: Stream ciphers"}).encode())
+    urllib.request.urlopen(req).read()
+    shutil.copy(wrong, downloads / "crypto5.tmpcopy")
+    os.replace(downloads / "crypto5.tmpcopy", downloads / "crypto5.pdf")
+    ew = wait_for(lambda: latest(core, "crypto5.pdf"), 90)
+    check("15b copy in the wrong place -> file sorted correctly, wrong copy moved to Bin",
+          ew and ew["status"] == "sorted" and rel(cfg, ew["current_path"]).startswith("Crypto/Lectures/Symmetric Cryptography/Lecture 05")
+          and not wrong.exists(), ew and rel(cfg, ew["current_path"]))
+
+    # notebook linked from a lecture line goes to the practical on the same topic --------
+    pdir = root / "DLCV" / "Practicals" / "Deep Learning" / "Practical 04 - Designing Architectures"
+    pdir.mkdir(parents=True, exist_ok=True)
+    core.deactivate()
+    nb_path = downloads / "unet.ipynb"
+    req = urllib.request.Request(base + "/context", method="POST", headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"path": str(nb_path), "course_code": "COMP3801_2026",
+                                                  "course_name": "Deep Learning & Computer Vision",
+                                                  "chain": ["Slides and Code", "Deep Learning"],
+                                                  "item_title": "Lecture 3: Designing architectures",
+                                                  "link_text": "unet"}).encode())
+    urllib.request.urlopen(req).read()
+    download(downloads, "unet.ipynb", lambda p: p.write_text(json.dumps(
+        {"cells": [{"cell_type": "markdown", "source": ["# U-Net"]}], "nbformat": 4}), encoding="utf-8"))
+    en = wait_for(lambda: latest(core, "unet.ipynb"), 90)
+    ok = en and Path(en["current_path"]).parent == pdir and any(x.endswith(".pdf") for x in en.get("extras", []))
+    check("16 lecture notebook -> matching practical folder + printable PDF copy", ok,
+          en and rel(cfg, en["current_path"]))
+
+    # failed download is logged clearly -------------------------------------------------
+    req = urllib.request.Request(base + "/fetch", method="POST", headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"url": "http://127.0.0.1:9/nope.pdf", "name": "nope.pdf",
+                                                  "ctx": {"course_code": "COMP3801_2026"}}).encode())
+    fr = json.loads(urllib.request.urlopen(req).read())
+    ef = latest(core, "nope.pdf")
+    check("17 failed download -> clear 'failed' entry with reason", not fr["ok"] and ef and ef["status"] == "failed",
+          ef and ef.get("message"))
 
     core.shutdown()
     print()

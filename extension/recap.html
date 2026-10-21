@@ -33,6 +33,12 @@
   button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:6px 12px; font:600 13px "Segoe UI"; cursor:pointer; }
   button.ghost { background:transparent; color:var(--muted); }
   .group { margin-top:22px; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .failbox { border:1px solid var(--err); background:rgba(242,102,91,.08); border-radius:6px; padding:10px 12px; margin-bottom:18px; }
+  .failhead { color:var(--err); font-weight:600; display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .failhead button { margin-left:auto; background:var(--err); }
+  .failrow { display:flex; align-items:center; gap:10px; padding:4px 0; font-size:13px; }
+  .failrow span { color:var(--muted); font-size:12px; }
+  .failrow button { margin-left:auto; padding:3px 10px; background:var(--row); }
   #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line);
            padding:8px 14px; border-radius:6px; font-size:13px; opacity:0; transition:opacity .2s; }
   #toast.show { opacity:1; }

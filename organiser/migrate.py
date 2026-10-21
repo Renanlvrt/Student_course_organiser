@@ -86,7 +86,7 @@ def plan_migration(cfg, progress=None):
             mod = pmod
         part_hint = ppart if pmod and pmod == mod else None
         _collect(top, top, mod, part_hint, None, work)
-    for i, (src, top, mod, part_hint, cat_hint) in enumerate(work):
+    for i, (src, top, mod, part_hint, cat_hint, num_hint) in enumerate(work):
         if progress:
             progress(i, len(work), src.name)
         when = datetime.fromtimestamp(src.stat().st_mtime)
@@ -101,6 +101,10 @@ def plan_migration(cfg, progress=None):
             c.category = cat_hint
             c.sources["category"] = "old folder"
             c.confidence = max(c.confidence, min(1.0, 0.85 if c.module else 0.0))
+        if num_hint and c.category in ("Lectures", "Practicals", "Solutions"):
+            c.number = c.number or num_hint
+            if c.category == "Solutions":
+                c.relates_to = "Lectures" if cat_hint == "Lectures" else "Practicals"
         items.append({"src": str(src), "kind": "dir" if src.is_dir() else "file", "action": "move",
                       "c": c.to_dict(), "text": text[:3000], "title": title, "cleanup": str(top),
                       "old_rel": str(src.relative_to(cfg.root_folder))})
@@ -110,14 +114,23 @@ def plan_migration(cfg, progress=None):
     return items
 
 
-def _collect(d, top, mod, part_hint, cat_hint, out):
+NUMBERED_DIR = re.compile(r"^(pract|practical|prac|lab|tutorial|lec|lecture)s?\s*[-_ ]?\s*0*(\d{1,2})$", re.I)
+
+
+def _collect(d, top, mod, part_hint, cat_hint, out, num_hint=None):
     for child in sorted(d.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         if child.is_dir():
             cat = _container_category(child.name)
             if cat:
                 _collect(child, top, mod, part_hint, cat, out)
                 continue
-        out.append((child, top, mod, part_hint, cat_hint))
+            # "pract1" holding only files: sort its files one by one into the new "Practical 01 - …" folder.
+            m = NUMBERED_DIR.match(child.name)
+            if m and not any(x.is_dir() for x in child.iterdir()):
+                cat = "Lectures" if m.group(1).lower().startswith("lec") else "Practicals"
+                _collect(child, top, mod, part_hint, cat, out, num_hint=int(m.group(2)))
+                continue
+        out.append((child, top, mod, part_hint, cat_hint, num_hint))
 
 
 def _preview_dests(cfg, items):
