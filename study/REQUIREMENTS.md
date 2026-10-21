@@ -204,3 +204,4 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   NotebookLM: step `nlm` via unofficial notebooklm-py; explainer format (cinematic needs AI Ultra), one
   video per hard concept (≤ 5 per lecture), sourced from the audited Master; needs `notebooklm login` once.
   `check` now requires glossary + figures everywhere and the full hard-concept kit.
+- **Usage stop raised to 95%** (was 85%) on request; live-configurable in `data/study/limits.json`.

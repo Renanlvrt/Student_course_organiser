@@ -15,7 +15,7 @@ from pathlib import Path
 CLAUDE_MODELS = {"sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5", "haiku": "claude-haiku-5-5"}
 AGY_MODELS = {"gemini": "gemini-4-argon-high", "flash": "gemini-3.8-flash-high"}
 AGY_DEFAULT = "gemini-4-argon-high"
-STOP_AT = 0.85         # don't start Claude jobs above this 5-hour or weekly utilisation
+STOP_AT = 0.95         # don't start Claude jobs above this 5-hour or weekly utilisation
 
 
 class RunnerError(RuntimeError):
@@ -47,6 +47,15 @@ def _save_usage_unlocked(cfg, runner, info):
     f.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def stop_at(cfg):
+    """STOP_AT, or the value in data/study/limits.json ({"stop_at": 0.95}), re-read before every call."""
+    f = cfg.data_dir / "study" / "limits.json"
+    try:
+        return float(json.loads(f.read_text(encoding="utf-8"))["stop_at"])
+    except (OSError, ValueError, KeyError):
+        return STOP_AT
+
+
 def claude_headroom(cfg):
     """(ok, message) from the last rate_limit_event seen."""
     u = last_usage(cfg).get("claude", {})
@@ -59,15 +68,16 @@ def claude_headroom(cfg):
     if five is None:
         return True, "Claude usage unknown (no run yet)"
     msg = f"Claude: 5-hour {five:.0%}, week {week:.0%}"
-    return (five < STOP_AT and (week or 0) < STOP_AT), msg
+    limit = stop_at(cfg)
+    return (five < limit and (week or 0) < limit), msg
 
 
 def run_claude(cfg, prompt, model="sonnet", tools=("Read",), add_dirs=(), cwd=None, timeout=1800):
     ok, msg = claude_headroom(cfg)
     if not ok:
         u = last_usage(cfg).get("claude", {})
-        week_full = (u.get("seven_day") or 0) >= STOP_AT
-        raise LimitReached(f"Stopped before starting: {msg} (limit {STOP_AT:.0%}).",
+        week_full = (u.get("seven_day") or 0) >= stop_at(cfg)
+        raise LimitReached(f"Stopped before starting: {msg} (limit {stop_at(cfg):.0%}).",
                            u.get("seven_day_resets") if week_full else u.get("five_hour_resets"))
     cmd = [shutil.which("claude") or "claude", "-p", "--model", CLAUDE_MODELS.get(model, model), "--output-format", "stream-json",
            "--verbose", "--allowedTools", ",".join(tools)]
