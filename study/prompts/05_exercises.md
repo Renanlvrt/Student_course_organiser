@@ -24,6 +24,9 @@ A JSON array of exercises:
  "src": "practical 2 Q3 | based on Lecture 03 p.8 | 💡 new"}
 ```
 
+Concepts marked `recap` in `{{PLAN_JSON}}` still get ≥1 interleaved question here, so revisited
+ideas keep being practised.
+
 ## Required volume and spread (these are minimums, not targets)
 - **Layer `practical`:** **every** question of every linked practical sheet, word for word, with the official
   solution if one exists. If none exists, write a full solution and mark it `💡 solution written by AI`.

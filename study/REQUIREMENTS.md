@@ -140,3 +140,19 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   It holds everything from every lecture, concept and additional reading, so the AI is as good as it can be.
   → `09_knowledge_file.md`, with a manifest of sources and hashes for incremental updates.
 - **Install the visualisation/interactive skills** (done, see `study/prompts/README.md`).
+
+## Round 4 (2026-10-21)
+- **Papermorph** (DozenTwelve/Papermorph, 812★): judged **not to install**. It makes narrated lesson films for
+  watching, and its skill selects "the ideas, examples and sections to teach", which breaks the "miss
+  nothing" rule. It is also heavy (an intake conversation, TTS per chapter) and tuned for Opus. We borrow only
+  its idea of formulas and diagrams changing step by step with captions, which our Stepper already does.
+- **UI colours: white background plus other colours. NO purple.** Written into `06_site_shell.md`.
+- **Scalable growth:** when more lectures arrive, add only what isn't already on the site. Track how deeply
+  every concept has been explained:
+  - Explained in detail already → don't re-explain (recap + link).
+  - Explained only briefly before and in detail now → explain it in detail now.
+  - Already detailed but the new lecture adds aspects → explain only the missing parts.
+  - → `03b_merge_registry.md` (registry with depth and aspects per concept).
+- Antigravity works interactively for me ("Reply Ok" → "Ok"). **Go ahead with implementation.**
+- Headless `agy -p` still never starts a turn (3 attempts, 0 events). Gemini CLI needs a one-time
+  browser login (`gemini`). Until one of them works headless, the pipeline runs every step with Claude Code.

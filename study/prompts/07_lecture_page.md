@@ -13,6 +13,9 @@ steppable Canvas/SVG figures, conversational but precise prose) and **frontend-d
 Its output format is replaced by our shell's components, so the result is part of the site, not a separate
 single page.
 
+Follow `{{PLAN_JSON}}`: full sections only for `all`/`aspects` concepts; `recap` concepts get a compact recap
+card linking to their home lecture. Apply `{{BACKLINKS_JSON}}` to the earlier pages it lists.
+
 ## Page structure (in this order)
 1. **Map:** what this lecture answers, the concepts in learning order, and the earlier concepts it needs (links).
 2. **One section per concept, in `learning_order`:**

@@ -28,7 +28,14 @@ framework, and it opens directly from disk (`file://`). Chrome blocks `fetch()` 
   - `Cards`: active-recall flashcards with spaced repetition (SM-2-style intervals).
   - `Progress`: every attempt is stored in `localStorage`. A wrong answer adds the concept to Weak topics and
     schedules a re-ask. Includes export and import as JSON, so progress survives a browser wipe.
-- A design that is calm and readable for long sessions, with light and dark themes, keyboard navigation (←/→
+- **Colours (the student's choice):**
+  - A **white** background with clean, high-contrast text.
+  - Accents in teal/blue, amber/orange, green and red.
+  - **No purple or violet anywhere**: not in accents, gradients, links, highlights, charts or syntax themes.
+  - Every accent has a fixed meaning that is used everywhere (e.g. key = amber, plaintext = blue,
+    ciphertext = red, correct = green).
+  - Dark mode is an optional toggle; light is the default.
+- A design that is calm and readable for long sessions, with keyboard navigation (←/→
   between sections, space to play/pause animations), print-friendly CSS and a mobile layout.
 - `ARCHITECTURE.md`: the file tree, the data flow (JSON → pages), the component APIs and how to add a lecture.
 

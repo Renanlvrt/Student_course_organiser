@@ -3,6 +3,9 @@
 **Runner:** Claude Sonnet (Claude Code, or Sonnet inside Antigravity when Claude limits are high).
 **Unit:** one lecture. **Inputs:** the audited `{{MASTER_MD}}` and `{{CONCEPTS_JSON}}`.
 
+Follow `{{PLAN_JSON}}` (step 3b): `all` = full treatment; `aspects:[…]` = teach only those aspects and link to the
+concept's home section for the rest; `recap` = only a short recap card + link (no animation/sandbox needed).
+
 Design **how each concept will be taught**, before any HTML is written. Output
 `{{OUT_DIR}}/{{LECTURE_STEM}} - teaching.json`, with one entry per concept id (every id, none skipped):
 
