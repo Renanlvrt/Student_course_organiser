@@ -4,7 +4,9 @@
 **Inputs:** `{{MASTER_MD}}`, `{{CONCEPTS_JSON}}`, `{{TEACHING_JSON}}`, `{{EXERCISES_JSON}}`, the site shell in
 `{{SITE_DIR}}` (read `ARCHITECTURE.md` first and reuse its components; don't fork them).
 
-Write `{{SITE_DIR}}/lectures/{{NN}}-{{SLUG}}.html` (+ `js/lectures/{{NN}}.js` for its visuals).
+Write `{{SITE_DIR}}/lectures/{{NN}}-{{SLUG}}.html`, plus `js/lectures/{{NN}}.js` for its visuals and
+`data/L{{NN}}.js` (its JSON as a global, as in `ARCHITECTURE.md`). Use classic scripts only, with no
+`fetch` and no ES modules: the site must work from `file://`.
 
 Use the **creating-explainers** skill's figure and voice guidance for every concept section (hand-built,
 steppable Canvas/SVG figures, conversational but precise prose) and **frontend-design** for visual quality.

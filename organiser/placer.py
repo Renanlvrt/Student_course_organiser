@@ -19,7 +19,7 @@ PREFIX = {"Lectures": "Lecture", "Practicals": "Practical", "Solutions": "Soluti
 FOLDERED = {"Lectures": "Lecture", "Practicals": "Practical"}
 ATTACHED = {"Solutions": "Solutions"}
 DOC_EXTS = {".pdf", ".pptx", ".ppt", ".docx", ".doc", ".html", ".htm", ".md", ".txt", ".odt", ".odp"}
-SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__"}
+SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "lectures_markdown"}  # last: study pipeline output
 
 
 @dataclass

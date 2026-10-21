@@ -28,4 +28,6 @@ source supports it.
  "verdict": "PASS only if all four lists are empty"}
 ```
 Apply every fix to the master notes and the inventory yourself. Then re-run the audit on the changed pages
-and print the final verdict. The pipeline repeats this step until the verdict is PASS.
+and print the final verdict. The pipeline repeats this step until the verdict is PASS, for **at most 3
+rounds**. After that, the lecture is marked `needs human`, with the remaining items listed, so that a
+looping audit can't burn through usage limits.

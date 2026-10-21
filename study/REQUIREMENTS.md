@@ -96,7 +96,8 @@ This is a record of what I asked for. Open questions are at the bottom and are f
     (stored in the browser).
   - **Ask-Claude button.** Copy the question and my answer into a ready-made marking prompt for Claude/Gemini.
     The site contains no API key.
-  - (Not chosen: self-marking by revealing a model answer and mark scheme.)
+  - Full solutions and mark schemes are still shown after an attempt, because the solving strategy is the point.
+    Self-marking against them is optional. Ask-Claude is there for real marking of written answers.
 - **Markdown location:** inside the Lectures folder, `courses\<Module>\Lectures\<Part>\lectures_markdown\`.
   - One `.md` per lecture **and** per practical/exercise sheet.
   - The organiser must leave this folder alone (no moving, no duplicate removal).
@@ -126,7 +127,6 @@ This is a record of what I asked for. Open questions are at the bottom and are f
 
 ## Still to come from me
 - ~~My newer prompt~~ → given in round 3, merged into `study/prompts/`.
-- Should written/proof answers also get a revealable model answer? (not chosen in round 2; only Ask-Claude marks them)
 
 ## Round 3 (2026-10-21): the old prompts, and what the new ones must do better
 - The 3 old prompts were given (reading PDFs → learning plan, website, 5×15 mock questions). They are outdated.

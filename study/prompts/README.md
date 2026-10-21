@@ -7,6 +7,7 @@ Every prompt is run with `00_rules.md` prepended and its `{{placeholders}}` fill
 |---|---|---|---|---|
 | 0 | *(local script)* PDF → markdown with `<!-- page N -->` markers; flags bad pages | each PDF | local, free | — |
 | 1 | `01_fix_pages.md`: rewrite flagged pages from the page image | each PDF | Antigravity · Gemini Argon | — |
+| 1b | `01b_map_notes.md`: assign every page of whole-module notes to a lecture (or "unassigned", captured too) | each notes PDF | Antigravity · Gemini Argon | — |
 | 2 | `02_capture_lecture.md`: master notes + concept inventory, page by page | **one lecture** | Antigravity · Gemini Argon High | — |
 | 3 | `03_audit_coverage.md`: independent "did we lose anything?" audit, looped until PASS | one lecture | **different** model from step 2 (Sonnet) | `fact-checking-explainers` |
 | 4 | `04_teaching_plan.md`: explanation, analogies, examples, animation + sandbox storyboards, recall cards | one lecture | Sonnet | `generating-stem-flashcards` (cards) |
