@@ -226,3 +226,4 @@ This is a record of what I asked for. Open questions are at the bottom and are f
     parallel; `concept_notes` explain every concept; visuals only for the hardest topic (2 for dense lectures);
     audit + topics on Haiku; exercises one call with smaller minimums; Manim films via
     `python -m study films <Module> <Part> --every 3` (hardest topic per group of 3 lectures).
+- **Not fewer exercises** ("I need to train a lot"): minimums restored to 3 drill + 2 exam + 1 transfer per topic, ≥ 10 interleaved per lecture, every concept used, extra for hard topics.

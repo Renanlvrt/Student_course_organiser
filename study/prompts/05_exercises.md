@@ -32,13 +32,15 @@ concept ids the question uses. Topics marked `recap` get only interleaved questi
 - **Layer `practical`:** **every** question of every linked practical sheet, word for word, with the official
   solution if one exists. If none exists, write a full solution and mark it `💡 solution written by AI`.
 - For **each topic** (not each concept: keep the bank focused):
-  - ≥ 2 **drill** questions (increasing difficulty; auto-checkable where possible).
-  - ≥ 1 **exam**-style question, written in the profile's style.
+  - ≥ 3 **drill** questions (increasing difficulty; auto-checkable where possible).
+  - ≥ 2 **exam**-style questions, written in the profile's style.
   - ≥ 1 **transfer** question: a format or angle the past papers never used (a twist, reversed direction, a new
     context, "spot the flaw", "design a variant", "explain to a beginner"). This is zero-shot practice, so the
     student doesn't overfit to old papers.
-- ≥ 4 **interleaved** questions per lecture that mix this lecture's topics with earlier lectures'.
-- Across the topics, every **examinable concept** of the inventory is used by at least one question.
+- ≥ 10 **interleaved** questions per lecture that mix this lecture's topics with earlier lectures'.
+- Across the topics, every **examinable concept** of the inventory is used by at least one question, and
+  hard topics get extra drill and exam questions. The student wants to train a lot: more is better than fewer.
+- Keep each exercise compact (no padding in solutions) so many fit in one reply.
 - Concepts that past papers **never examined** get the same coverage as frequently examined ones.
 - Every numeric or computational question gets a `check` the website can verify in JS. Use small, exact
   values that you have **recomputed step by step yourself**. Wrong answers in an answer key are unacceptable.

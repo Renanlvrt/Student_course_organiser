@@ -6,8 +6,8 @@ import re
 
 from .lecture import lecture_folders, lecture_id, load_teaching, out_dir, _read_json
 
-MIN = {"drill": 2, "exam": 1, "transfer": 1}
-MIN_INTERLEAVED = 4
+MIN = {"drill": 3, "exam": 2, "transfer": 1}
+MIN_INTERLEAVED = 10
 
 
 def check_lecture(cfg, module, part, folder):
