@@ -223,3 +223,11 @@ button:disabled { opacity: .45; cursor: default; }
 .drawing .stage { min-height: 0; }
 :root[data-theme="dark"] .words { background: var(--tint); }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* ---------- topics and the ideas inside them */
+.topic { border-top: 2px solid var(--teal); padding-top: .4rem; }
+.ideas { margin: 0 0 2.4rem; }
+.idea { margin: .8rem 0; padding: .8rem 1.1rem; border: 1px solid var(--rule); border-radius: 12px; background: #fff; }
+.idea h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
+.idea .src { color: var(--ink-2); font-size: .8rem; margin: .4rem 0 0; }
+:root[data-theme="dark"] .idea { background: var(--tint); }

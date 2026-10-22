@@ -15,7 +15,7 @@ from .lecture import lecture_folders, lecture_id, map_notes, out_dir, run_lectur
 from .publish import publish
 from .site import build_site
 
-ALL_STEPS = ["capture", "audit", "registry", "teaching", "exercises", "visuals", "videos", "nlm"]
+ALL_STEPS = ["capture", "audit", "topics", "teaching", "exercises", "visuals", "videos", "nlm"]
 
 
 def _log(msg):

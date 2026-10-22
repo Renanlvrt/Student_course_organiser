@@ -1,7 +1,6 @@
 # Step 3: Independent coverage audit
 
-**Runner:** a DIFFERENT model or session from Step 2 (default: Claude Sonnet). It gets a fresh context
-on purpose, so it cannot "remember" what it meant to write. **Unit:** one lecture.
+**Runner:** Claude Sonnet in a fresh session (independent of step 2), one pass. **Unit:** one lecture.
 
 ## Inputs
 - Source markdown: {{LECTURE_MD_FILES}} (+ {{NOTES_MD_SECTIONS}})
@@ -19,20 +18,21 @@ meaning** and is represented by a concept in the inventory.
 Also check the other direction. For each statement in the notes that is not marked `💡 Added`, confirm a
 source supports it.
 
-## Output
-First the audit between `<<<AUDIT` and `AUDIT>>>`:
+## Output (edits only: do NOT reprint the notes)
+Reply with one JSON object between `<<<AUDIT` and `AUDIT>>>`:
 ```json
-{"missing": [{"src": "... p.5", "item": "exact quote or description", "fix": "text to insert", "after_heading": "### p.5: ..."}],
- "distorted": [{"src": "...", "notes_say": "...", "source_says": "...", "fix": "..."}],
- "unsupported": [{"notes_say": "...", "fix": "mark as 💡 Added or delete"}],
- "concepts_missing": [{"name": "...", "src": "..."}],
- "verdict": "PASS only if all four lists are empty"}
+{"missing": [{"src": "<file stem> p.5", "item": "what the source has", "page": 5,
+              "text": "the markdown to add, complete and faithful, ending with [src: <file stem> p.5]"}],
+ "edits": [{"find": "an exact, unique snippet of the candidate notes (copy it character for character)",
+            "replace": "the corrected text", "why": "distorted | unsupported | other"}],
+ "concepts_missing": [{"id": "{{LECTURE_ID}}.<slug>", "name": "...", "kind": "...", "summary": "...", "src": ["..."]}],
+ "verdict": "PASS if nothing is missing or distorted, else FIX"}
 ```
-Then apply every fix yourself and emit the **complete corrected** master notes between `<<<MASTER_MD` and
-`MASTER_MD>>>`, and the complete corrected inventory between `<<<JSON` and `JSON>>>`. If the verdict is
-PASS, emit them unchanged. The verdict refers to the state **before** your fixes. The pipeline repeats this step until the verdict is PASS, for **at most 3
-rounds**. After that, the lecture is marked `needs human`, with the remaining items listed, so that a
-looping audit can't burn through usage limits.
+- `missing`: every examinable item the notes lose. The pipeline inserts `text` into the notes at that page.
+- `edits`: each distortion corrected, and each unsupported statement either marked `> 💡 Added:` or removed.
+  `find` must occur exactly once in the candidate notes; keep it short (one sentence or formula).
+- Only list real problems. Do not rephrase correct text and do not flag correct derivations that are already
+  marked as additions. If everything is right, return empty lists and `"verdict": "PASS"`.
 
 ## Sources
 {{SOURCES}}

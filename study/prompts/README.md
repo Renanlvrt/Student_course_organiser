@@ -6,6 +6,10 @@ Every prompt is run with `00_rules.md` prepended and its `{{placeholders}}` fill
 Default `--runner claude`: **Claude Code runs every step** (Sonnet; the audit uses Opus so it is an independent,
 stronger check). `--runner agy` or `auto` (Antigravity for content, Claude for visuals) remain as opt-in fallbacks. Publish for the phone: `python -m study publish <Module>`.
 
+**Token budget (2026-10-22):** notes, glossary and flashcards cover every concept; the rich teaching (visuals,
+sandboxes, videos, exercises) is built per **topic**, 2–5 per lecture. Target ≈ 15–25 % of a 5-hour window per
+lecture. Step 3 is one Sonnet pass returning edits; step 3b (registry) is replaced by 3c (`03c_topics.md`).
+
 | # | Prompt | Unit | Default runner | Skills used |
 |---|---|---|---|---|
 | 0 | *(local script)* PDF → markdown with `<!-- page N -->` markers; flags bad pages | each PDF | local, free | — |

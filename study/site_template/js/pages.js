@@ -7,8 +7,7 @@
 
   const lectureFiles = () => COURSE.lectures.flatMap((l) => ["data/" + l.id + ".js"]);
   const allExercises = () => Object.values(window.LECTURES || {}).flatMap((l) => (l.exercises || []).map((e) => Object.assign({ lecture: l.id }, e)));
-  const allCards = () => Object.values(window.LECTURES || {}).flatMap((l) => (l.teaching || []).flatMap((t) =>
-    (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k, concept: t.id }, c))));
+  const allCards = () => Object.values(window.LECTURES || {}).flatMap(S.lectureCards);
   const conceptName = (id) => { for (const l of Object.values(window.LECTURES || {})) for (const c of l.concepts || []) if (c.id === id) return c.name; return id; };
   const conceptVideos = (id) => Object.values(window.LECTURES || {}).flatMap((l) => (l.videos || []).filter((v) => v.concept === id));
   const conceptLecture = (id) => { for (const l of Object.values(window.LECTURES || {})) if ((l.concepts || []).some((c) => c.id === id)) return l.id; return null; };
@@ -49,6 +48,8 @@
     if (!L || !meta) { m.replaceChildren(h("h1", {}, "Not built yet"), h("p", {}, "Run the pipeline for this lecture, then rebuild the site.")); return; }
     document.title = meta.title + " | " + COURSE.module;
     const teach = Object.fromEntries((L.teaching || []).map((t) => [t.id, t]));
+    const topics = L.topics || [], byId = Object.fromEntries((L.concepts || []).map((c) => [c.id, c]));
+    lectureGlossary = L.glossary || [];
     const plan = Object.fromEntries(((L.plan && (L.plan.concepts || L.plan)) || []).map((p) => [p.id, p]));
     const order = (L.concepts || []).slice().sort((a, b) => ((teach[a.id] || {}).learning_order || 99) - ((teach[b.id] || {}).learning_order || 99));
     const exs = L.exercises || [];
@@ -64,14 +65,32 @@
     }
     const fill = {
       learn(p) {
-        p.append(h("ol", { class: "map read" }, order.map((c) => h("li", {}, h("span", { class: "dot " + ({ good: "good", weak: "weak", seen: "seen" }[S.progress.status(c.id)] || "") }),
-          h("a", { href: "#" + cssId(c.id) }, c.name), h("span", { class: "tag" }, recapOf(c.id) ? "recap" : c.kind || "")))));
-        for (const c of order) p.append(conceptSection(c, teach[c.id], plan[c.id], exs));
+        const dot = (id) => h("span", { class: "dot " + ({ good: "good", weak: "weak", seen: "seen" }[S.progress.status(id)] || "") });
+        if (!topics.length) {
+          p.append(h("ol", { class: "map read" }, order.map((c) => h("li", {}, dot(c.id),
+            h("a", { href: "#" + cssId(c.id) }, c.name), h("span", { class: "tag" }, recapOf(c.id) ? "recap" : c.kind || "")))));
+          for (const c of order) p.append(conceptSection(c, teach[c.id], plan[c.id], exs));
+        } else {
+          p.append(h("ol", { class: "map read" }, topics.map((tp) => h("li", {}, dot(tp.id),
+            h("a", { href: "#" + cssId(tp.id) }, tp.title), h("span", { class: "tag" }, (tp.hard ? "hard, " : "") + tp.concepts.length + " ideas")))));
+          for (const tp of topics) {
+            const asConcept = { id: tp.id, name: tp.title, kind: "Topic", summary: tp.why };
+            p.append(teach[tp.id] ? conceptSection(asConcept, Object.assign({ hard: tp.hard }, teach[tp.id]), null, exs) : topicHeader(asConcept, tp));
+            const inner = h("div", { class: "ideas" });
+            for (const cid of tp.concepts) {
+              const c = byId[cid];
+              if (!c) continue;
+              inner.append(teach[cid] ? conceptSection(c, teach[cid], plan[cid], exs) : ideaCard(c));
+            }
+            p.append(inner);
+          }
+        }
         observeSeen(p);
       },
       notes(p) { p.append(h("div", { class: "read notes" }, S.mdEl("div", L.master || "Master notes not built yet."))); },
       glossary(p) {
         const seen = new Map();
+        for (const g of L.glossary || []) { const k = String(g.term || "").toLowerCase(); if (k && !seen.has(k)) seen.set(k, g); }
         for (const c of order) for (const g of (teach[c.id] || {}).glossary || []) {
           const k = String(g.term || "").toLowerCase();
           if (k && !seen.has(k)) seen.set(k, Object.assign({ concept: c }, g));
@@ -80,11 +99,27 @@
         p.append(h("div", { class: "read" }, terms.length ? glossaryList(terms, true) : h("p", { class: "muted" }, "No glossary yet for this lecture.")));
       },
       cards(p) {
-        const cards = (L.teaching || []).flatMap((t) => (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k }, c)));
+        const cards = S.lectureCards(L);
         const mount = h("div", { class: "read" }); p.append(mount); S.cardSession(cards, mount);
       },
       practice(p) { p.append(exerciseBrowser(exs)); }
     };
+    function topicHeader(c, tp) {
+      const sec = h("section", { class: "concept topic", id: cssId(c.id), "data-concept": c.id },
+        h("p", { class: "kind" }, "Topic"), h("h2", {}, c.name, tp.hard ? h("span", { class: "hardtag ui" }, "Hard topic") : ""),
+        c.summary ? S.mdEl("p", c.summary, "hook") : "");
+      const vis = S.visuals[c.id] || {};
+      for (const fg of vis.figures || []) sec.append(S.figure(fg));
+      if (vis.animation) sec.append(S.stepper(vis.animation));
+      for (const an of vis.animations || []) sec.append(S.stepper(an));
+      if (vis.sandbox) sec.append(S.sandbox(vis.sandbox, c.id));
+      return sec;
+    }
+    function ideaCard(c) {
+      return h("section", { class: "idea read", id: cssId(c.id), "data-concept": c.id },
+        h("h3", {}, c.name), S.mdEl("div", c.summary || ""),
+        (c.src || []).length ? h("p", { class: "src ui" }, "Source: " + [].concat(c.src).join("; ")) : "");
+    }
     function recapOf(cid) { const pl = plan[cid]; return pl && (pl.teach === "recap" || pl.action === "recap") ? pl : null; }
     for (const k of Object.keys(tabs)) panes[k] = h("div", { role: "tabpanel", hidden: true });
     m.replaceChildren(h("div", { class: "read" }, h("p", { class: "kind" }, COURSE.part + " · " + id), h("h1", {}, meta.title.replace(/^Lecture \d+ - /, "")),
@@ -93,6 +128,7 @@
     if (location.hash) setTimeout(() => { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }, 50);
   }
   const cssId = (id) => "c-" + String(id).replace(/[^A-Za-z0-9_-]/g, "-");
+  let lectureGlossary = [];
   function glossaryList(terms, withLinks) {
     return h("dl", { class: "glossary" }, terms.flatMap((g) => [
       h("dt", {}, S.mdEl("span", g.term), withLinks && g.concept ? h("a", { class: "from ui", href: "#" + cssId(g.concept.id), onclick: () => { const b = document.querySelector('.tabs [data-k="learn"]'); if (b) b.click(); } }, g.concept.name) : ""),
@@ -112,7 +148,9 @@
     } else {
       if (t.hook) sec.append(S.mdEl("p", t.hook, "hook"));
       if (Array.isArray(teachMode)) sec.append(S.mdEl("p", "This lecture adds: " + teachMode.join(", ") + ".", "muted ui"));
-      if ((t.glossary || []).length) sec.append(h("div", { class: "words read" }, h("p", { class: "ui label" }, "Words to know"), glossaryList(t.glossary, false)));
+      const words = (t.glossary || []).length ? t.glossary
+        : (t.terms || []).map((w) => lectureGlossary.find((g) => String(g.term).toLowerCase() === String(w).toLowerCase())).filter(Boolean);
+      if (words.length) sec.append(h("div", { class: "words read" }, h("p", { class: "ui label" }, "Words to know"), glossaryList(words, false)));
       if (t.intuition) sec.append(h("div", { class: "intuition read" }, S.mdEl("div", "**The idea in plain words.** " + t.intuition)));
       sec.append(S.mdEl("div", t.explanation || c.summary || "", "read"));
       for (const a of t.analogies || []) {

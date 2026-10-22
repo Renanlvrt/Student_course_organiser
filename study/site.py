@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from .convert import MD_DIR
-from .lecture import lecture_folders, lecture_id, out_dir, part_dir, _read_json
+from .lecture import lecture_folders, lecture_id, load_teaching, out_dir, part_dir, _read_json
 
 TEMPLATE = Path(__file__).resolve().parent / "site_template"
 
@@ -39,8 +39,11 @@ def build_site(cfg, module, part, log=print):
         if concepts is None:
             continue
         plan = _read_json(od / f"{stem} - plan.json", [])
+        entries, glossary, cards = load_teaching(od, stem)
         data = {"id": lid, "title": stem, "concepts": concepts,
-                "teaching": _read_json(od / f"{stem} - teaching.json", []),
+                "topics": _read_json(od / f"{stem} - topics.json", []),
+                "glossary": glossary, "cards": cards,
+                "teaching": entries,
                 "exercises": _read_json(od / f"{stem} - exercises.json", []),
                 "videos": _read_json(od / f"{stem} - videos.json", []) +
                           _read_json(od / f"{stem} - notebooklm.json", {}).get("videos", []),

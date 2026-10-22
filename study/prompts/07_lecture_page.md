@@ -4,9 +4,9 @@
 
 The site shell already renders everything textual from the pipeline data: explanations, analogies, examples,
 misconceptions, exam tips, the full audited notes, flashcards and every exercise. **Your only job is the
-visuals:** one file, `visuals/{{LECTURE_ID}}.js`, that registers for every concept the plan marks `all` or
-`aspects` (recap concepts need none):
+visuals:** one file, `visuals/{{LECTURE_ID}}.js`, that registers, **for every topic id in this call** (recap topics need none):
 - the main **animation** (its `animation` storyboard), plus one per `extra_animations` storyboard;
+  register them under the **topic id** (`Study.visuals["L03.t2"] = {…}`);
 - one **drawing** per `figures` entry;
 - the **sandbox**.
 
@@ -84,7 +84,7 @@ Study.selftest("LFSR degree-4 example", () => lfsrRun([0,1,1,0], [1,1,0,0], 10).
 Reply with the complete file between `<<<VISUALS_JS` and `VISUALS_JS>>>`, then a table:
 `concept id | animations (frames each) | figures | sandbox | self-tests`. Every `all` / `aspects` concept must be listed.
 
-## Plan (step 3b)
+## Topics (step 3c)
 {{PLAN}}
 
 ## Teaching design (storyboards are in `animation` and `sandbox`)

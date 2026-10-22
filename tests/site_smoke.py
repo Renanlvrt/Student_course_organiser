@@ -68,14 +68,29 @@ def main():
     (site / "data").mkdir()
     (site / "visuals").mkdir()
     course = {"key": "Test", "module": "Cryptography", "code": "COMP0000", "part": "Symmetric",
-              "lectures": [{"id": "L01", "title": "Lecture 01 - Basics", "concepts": ["L01.xor"]}]}
+              "lectures": [{"id": "L01", "title": "Lecture 01 - Basics", "concepts": ["L01.xor"]},
+                           {"id": "L02", "title": "Lecture 02 - Stream ciphers", "concepts": ["L02.prg", "L02.otp-reuse"]}]}
     (site / "data/course.js").write_text("window.COURSE = " + json.dumps(course) + ";", encoding="utf-8")
     lec = {"id": "L01", "title": "Lecture 01 - Basics", "concepts": [CONCEPT], "teaching": [TEACH], "exercises": EXERCISES,
            "plan": [{"id": "L01.xor", "teach": "all"}], "videos": [{"concept": "L01.xor", "title": "XOR undoes itself", "file": "videos/L01_xor.mp4"}],
            "master": "### p.3: XOR\n\nDefinition of $\\oplus$. [src: Lecture 01 p.3]"}
+    lec2 = {"id": "L02", "title": "Lecture 02 - Stream ciphers",
+            "concepts": [{"id": "L02.prg", "name": "Pseudorandom generator", "kind": "definition", "summary": "Stretches a short seed."},
+                         {"id": "L02.otp-reuse", "name": "Two-time pad", "kind": "attack", "summary": "Reusing a pad leaks $m_1 \\oplus m_2$."}],
+            "topics": [{"id": "L02.t1", "title": "Stream ciphers from a PRG", "concepts": ["L02.prg", "L02.otp-reuse"], "hard": True, "why": "Build one and break key reuse."}],
+            "glossary": [{"term": "seed", "plain": "the short random key a PRG starts from"}],
+            "cards": [{"concept": "L02.prg", "front": "What does a PRG stretch?", "back": "A short seed", "layer": "recall"}],
+            "teaching": [{"id": "L02.t1", "hook": "Can a short key encrypt a long message?", "terms": ["seed"],
+                          "explanation": "XOR the message with $G(s)$.", "sandbox": {"title": "PRG lab"}}],
+            "exercises": [], "plan": [], "master": "notes"}
+    (site / "data/L02.js").write_text("window.LECTURES = window.LECTURES || {}; window.LECTURES.L02 = " + json.dumps(lec2) + ";", encoding="utf-8")
     (site / "data/L01.js").write_text("window.LECTURES = window.LECTURES || {}; window.LECTURES.L01 = " + json.dumps(lec) + ";", encoding="utf-8")
     (site / "visuals/L01.js").write_text(VISUAL, encoding="utf-8")
     checks = [
+        ("lecture.html?id=L02", ["Stream ciphers from a PRG", "Hard concept", "Words to know", "the short random key",
+                                 "Two-time pad", "Reusing a pad leaks", "PRG lab"]),
+        ("lecture.html?id=L02&tab=glossary", ["seed"]),
+        ("lecture.html?id=L02&tab=cards", ["What does a PRG stretch?"]),
         ("lecture.html?id=L01", ["XOR of bit strings", "Next step", "XOR playground", "Solved.", "katex", "light switch", "Quick check", "Short film: XOR undoes itself", "Words to know", "a row of 0s and 1s",
                                     "Hard concept", "The idea in plain words", "Truth table", "Figure one", "Second animation"]),
         ("lecture.html?id=L01&tab=practice", ["Ask Claude to mark it", "3 exercises"]),

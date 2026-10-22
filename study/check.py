@@ -1,59 +1,67 @@
-"""Coverage checker (no model): a lecture counts as done only when every concept has everything it should."""
-import json
+"""Coverage checker (no model): a lecture counts as done only when every topic has everything it should.
+
+The notes, glossary and cards cover every concept; the rich teaching (visuals, sandbox, exercises) is per topic.
+"""
 import re
 
-from .lecture import lecture_folders, lecture_id, out_dir, _read_json
+from .lecture import lecture_folders, lecture_id, load_teaching, out_dir, _read_json
 
 MIN = {"drill": 3, "exam": 2, "transfer": 1}
-MIN_INTERLEAVED = 10
+MIN_INTERLEAVED = 6
 
 
 def check_lecture(cfg, module, part, folder):
     od, stem = out_dir(cfg, module, part, folder), folder.name
     problems = []
-    audit = _read_json(od / f"{stem} - audit.json", {})
-    if audit.get("verdict") != "PASS":
-        problems.append(f"audit verdict is {audit.get('verdict', 'missing')!r}")
+    if _read_json(od / f"{stem} - audit.json", {}).get("verdict") != "PASS":
+        problems.append("audit has not passed")
     concepts = _read_json(od / f"{stem} - concepts.json", [])
-    plan_raw = _read_json(od / f"{stem} - plan.json", [])
-    plan = {p["id"]: p for p in (plan_raw.get("concepts", []) if isinstance(plan_raw, dict) else plan_raw)}
-    teaching = {t["id"]: t for t in _read_json(od / f"{stem} - teaching.json", [])}
+    topics = _read_json(od / f"{stem} - topics.json", [])
+    if not topics:
+        return [], problems + ["no topics yet"]
+    placed = {c for t in topics for c in t["concepts"]}
+    lost = [c["id"] for c in concepts if c["id"] not in placed]
+    if lost:
+        problems.append(f"concepts in no topic: {lost[:5]}")
+    entries, glossary, cards = load_teaching(od, stem)
+    pilot = isinstance(_read_json(od / f"{stem} - teaching.json", {}), list)   # first lecture: per-concept design
+    teach = {t["id"]: t for t in entries}
     exercises = _read_json(od / f"{stem} - exercises.json", [])
     vis_path = od / f"{stem} - visuals.js"
-    visuals = set(re.findall(r'Study\.visuals\[\s*["\']([^"\']+)', vis_path.read_text(encoding="utf-8"))) if vis_path.exists() else set()
+    visuals = set(re.findall(r"""Study\.visuals\[\s*["']([^"']+)""", vis_path.read_text(encoding="utf-8"))) \
+        if vis_path.exists() else set()
+    if not pilot:
+        if not glossary:
+            problems.append("no glossary")
+        if len(cards) < len(concepts):
+            problems.append(f"flashcards {len(cards)} for {len(concepts)} concepts")
     rows = []
-    for c in concepts:
-        cid = c["id"]
-        mode = (plan.get(cid) or {}).get("teach", "all")
-        t = teaching.get(cid, {})
-        counts = {k: sum(1 for e in exercises if cid in (e.get("concepts") or []) and e.get("layer") == k) for k in MIN}
-        need = {}
-        if cid not in plan:
-            need["plan"] = "missing"
-        if mode != "recap":
-            for f in ("explanation", "analogies", "examples", "animation", "sandbox"):
-                if not t.get(f):
-                    need[f] = "missing"
-            if len(t.get("recall_cards") or []) < 3:
-                need["cards"] = f"{len(t.get('recall_cards') or [])}/3"
-            if cid not in visuals:
+    for tp in topics:
+        tid, need = tp["id"], {}
+        recap = str(tp.get("prior", "")).startswith("recap")
+        members = {tid, *tp["concepts"]}
+        if not recap:
+            if not (visuals & members):
                 need["visuals"] = "missing"
-            if not t.get("glossary"):
-                need["glossary"] = "missing"
-            if not t.get("figures"):
-                need["figures"] = "missing"
-            if t.get("hard") or (t.get("difficulty") or 0) >= 4:
-                for f in ("intuition", "extra_animations", "tables", "video"):
-                    if not t.get(f):
-                        need[f"hard: {f}"] = "missing"
-        for k, n in MIN.items():
-            if counts[k] < n:
-                need[k] = f"{counts[k]}/{n}"
-        rows.append((cid, mode, counts, need))
+            t = teach.get(tid)
+            if not pilot:
+                for f in ("explanation", "animation", "sandbox", "figures"):
+                    if not (t or {}).get(f):
+                        need[f] = "missing"
+                if tp.get("hard"):
+                    for f in ("intuition", "tables"):
+                        if not (t or {}).get(f):
+                            need[f"hard: {f}"] = "missing"
+            counts = {k: sum(1 for e in exercises if members & set(e.get("concepts") or []) and e.get("layer") == k)
+                      for k in MIN}
+            for k, n in MIN.items():
+                if counts[k] < n:
+                    need[k] = f"{counts[k]}/{n}"
+        rows.append((tid, need))
         if need:
-            problems.append(f"{cid}: " + ", ".join(f"{k} {v}" for k, v in need.items()))
+            problems.append(f"{tid} ({tp['title']}): " + ", ".join(f"{k} {v}" for k, v in need.items()))
     inter = sum(1 for e in exercises if e.get("layer") == "interleaved")
-    if inter < MIN_INTERLEAVED:
+    if not pilot and inter < MIN_INTERLEAVED:
         problems.append(f"interleaved questions {inter}/{MIN_INTERLEAVED}")
     bad_mcq = [e["id"] for e in exercises if (e.get("check") or {}).get("type") == "mcq" and not e.get("options")]
     if bad_mcq:
@@ -68,7 +76,7 @@ def check_part(cfg, module, part, log=print):
             log(f"{lecture_id(folder)}: not captured yet")
             continue
         rows, problems = check_lecture(cfg, module, part, folder)
-        log(f"{lecture_id(folder)}: {len(rows)} concepts, " + ("COMPLETE" if not problems else f"{len(problems)} problem(s)"))
+        log(f"{lecture_id(folder)}: {len(rows)} topics, " + ("COMPLETE" if not problems else f"{len(problems)} problem(s)"))
         for p in problems:
             log("   - " + p)
         total += len(problems)

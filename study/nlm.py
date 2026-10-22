@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 
-MAX_PER_LECTURE = 5           # NotebookLM limits video overviews per day
+MAX_PER_LECTURE = 2           # hard topics only; NotebookLM limits video overviews per day
 STYLE = ("Clean, light, minimal diagrams on an off-white background; soft Apple-style colours (teal, orange, "
          "blue, red, green), never purple; large clear labels; maths written properly; calm pacing.")
 
@@ -40,8 +40,9 @@ def _find_id(data):
 
 
 def logged_in():
-    code, out, err = _nlm("auth", "check", timeout=120)
-    return code == 0 and "not" not in (out + err).lower().split("authenticated")[0][-20:]
+    """A real call: `auth check` can report valid cookies that Google has already signed out."""
+    code, out, err = _nlm("list", "--json", timeout=120)
+    return code == 0 and '"error": true' not in out
 
 
 def nlm_videos(cfg, module, part, folder, runner_name=None, log=print):
@@ -50,8 +51,8 @@ def nlm_videos(cfg, module, part, folder, runner_name=None, log=print):
     lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
     state_path = od / f"{stem} - notebooklm.json"
     state = _read_json(state_path, {"notebook": None, "videos": []})
-    teaching = _read_json(od / f"{stem} - teaching.json", [])
-    hard = [t for t in teaching if t.get("hard") or (t.get("difficulty") or 0) >= 4][:MAX_PER_LECTURE]
+    topics_list = _read_json(od / f"{stem} - topics.json", [])
+    hard = [t for t in topics_list if t.get("hard")][:MAX_PER_LECTURE]
     todo = [t for t in hard if t["id"] not in {v["concept"] for v in state["videos"]}]
     if not todo:
         return log(f"{lid} NotebookLM videos: {len(state['videos'])} (nothing to do)")
@@ -68,13 +69,16 @@ def nlm_videos(cfg, module, part, folder, runner_name=None, log=print):
             return log(f"{lid} NotebookLM: could not add the notes: {(err or out)[-300:]}")
         _nlm("source", "wait", "-n", state["notebook"], timeout=900)
         _write_json(state_path, state)
-    names = {c["id"]: c["name"] for c in _read_json(od / f"{stem} - concepts.json", [])}
+    names = {t["id"]: t["title"] for t in topics_list}
+    concept_names = {c["id"]: c["name"] for c in _read_json(od / f"{stem} - concepts.json", [])}
     out_dir_site = site_dir(cfg, module, part) / "videos"
     out_dir_site.mkdir(parents=True, exist_ok=True)
     for t in todo:
         name = names.get(t["id"], t["id"])
-        brief = (f"Explain ONLY '{name}' from these lecture notes, for a university student revising for the "
-                 f"{module.name} exam who has never understood it. Start from the intuition ({t.get('hook', '')}), "
+        covers = ", ".join(concept_names.get(c, c) for c in t.get("concepts", []))
+        brief = (f"Explain ONLY the topic '{name}' (covering: {covers}) from these lecture notes, for a university "
+                 f"student revising for the {module.name} exam who has never understood it. Start from the intuition "
+                 f"({t.get('why', '')}), "
                  "then build the formal idea step by step with a worked example, using exactly the course's "
                  "notation and definitions. End with the common mistakes and how it is examined. Stay faithful to "
                  "the notes; do not add material they do not contain.")

@@ -205,3 +205,17 @@ This is a record of what I asked for. Open questions are at the bottom and are f
   video per hard concept (≤ 5 per lecture), sourced from the audited Master; needs `notebooklm login` once.
   `check` now requires glossary + figures everywhere and the full hard-concept kit.
 - **Usage stop raised to 95%** (was 85%) on request; live-configurable in `data/study/limits.json`.
+
+## Round 9 (2026-10-22): token budget
+- "2 times the 5h limit per lecture will be way too much… 49 concepts can be across the 10 or 20 lectures…
+  2 to 5 concepts with visuals and everything… for all 6 modules + 2 semesters a year… not too much for little
+  content." → **Topic mode**: every concept stays in the notes, glossary and flashcards (cheap), but the rich
+  teaching (animations, sandboxes, figures, videos, exercises) is per **topic, 2–5 per lecture**.
+  - Audit: one Sonnet pass returning edits (Opus ×3 full rewrites cost ~23 % of a window).
+  - Topics (3c) replaces the registry (3b): small call, part-level `topics.json`, `prior` new/extends/recap.
+  - Teaching: one call (topics + lecture glossary + 2 cards per concept). Exercises: one call per lecture, per topic.
+  - Visuals: per topic. Manim video: at most 1 per lecture. NotebookLM: at most 2 hard topics per lecture.
+  - Lecture 1 (built before this change) keeps all its paid-for content: 49 concept designs, 248 exercises,
+    8 Manim videos, 6 concept visuals; only its topics and the missing topic visuals are added.
+- Bugs fixed: usage-limit errors inside the parallel steps now make the driver sleep instead of failing;
+  NotebookLM login is checked with a real call (its cookies had expired although `auth check` said valid).

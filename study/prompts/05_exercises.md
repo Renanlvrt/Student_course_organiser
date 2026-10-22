@@ -25,28 +25,29 @@ A JSON array of exercises between `<<<JSON` and `JSON>>>`:
  "src": "practical 2 Q3 | based on Lecture 03 p.8 | 💡 new"}
 ```
 
-Concepts marked `recap` in `{{PLAN_JSON}}` still get ≥1 interleaved question here, so revisited
-ideas keep being practised.
+Exercises are organised by **topic** (see the topics below): put the topic id first in `concepts`, then any
+concept ids the question uses. Topics marked `recap` get only interleaved questions.
 
 ## Required volume and spread (these are minimums, not targets)
 - **Layer `practical`:** **every** question of every linked practical sheet, word for word, with the official
   solution if one exists. If none exists, write a full solution and mark it `💡 solution written by AI`.
-- For **each concept**:
+- For **each topic** (not each concept: keep the bank focused):
   - ≥ 3 **drill** questions (increasing difficulty; auto-checkable where possible).
   - ≥ 2 **exam**-style questions, written in the profile's style.
   - ≥ 1 **transfer** question: a format or angle the past papers never used (a twist, reversed direction, a new
     context, "spot the flaw", "design a variant", "explain to a beginner"). This is zero-shot practice, so the
     student doesn't overfit to old papers.
-- ≥ 10 **interleaved** questions per lecture that mix this lecture's concepts with earlier lectures'.
+- ≥ 6 **interleaved** questions per lecture that mix this lecture's topics with earlier lectures'.
+- Across the topics, every **examinable concept** of the inventory is used by at least one question.
 - Concepts that past papers **never examined** get the same coverage as frequently examined ones.
 - Every numeric or computational question gets a `check` the website can verify in JS. Use small, exact
   values that you have **recomputed step by step yourself**. Wrong answers in an answer key are unacceptable.
 
 ## Final self-check
-Print `concept id | drill | exam | transfer` counts, the number of practical questions included compared
+Print `topic id | drill | exam | transfer` counts, the number of practical questions included compared
 with the number on the sheets, and `answer keys recomputed: yes`.
 
-## Plan (step 3b)
+## Topics (step 3c)
 {{PLAN}}
 
 ## Concept inventory

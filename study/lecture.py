@@ -1,4 +1,5 @@
-"""Steps 1b, 2, 3, 3b for one lecture: map notes -> capture -> independent audit (<= 3 rounds) -> registry.
+"""One lecture: map notes -> capture -> audit (one pass, edits applied) -> topics -> teaching -> exercises /
+visuals / videos / NotebookLM. Rich teaching is built per topic (2-5 per lecture) to keep token use low.
 
 Everything the model returns comes back between <<<NAME ... NAME>>> markers; this module writes the files
 into Lectures/<Part>/lectures_markdown/<Lecture NN - Topic>/ so the model needs no write access.
@@ -11,8 +12,6 @@ from . import runner
 from .convert import MD_DIR
 from .fix_pages import split_pages
 
-MAX_AUDIT_ROUNDS = 3
-EX_BATCH = 5            # concepts per exercises call
 
 
 def block(text, name):
@@ -154,6 +153,7 @@ def capture(cfg, module, part, folder, runner_name="claude", log=print):
 
 
 def audit(cfg, module, part, folder, runner_name="claude", log=print):
+    """One independent Sonnet pass that returns edits (not a rewrite); the edits are applied here."""
     lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
     status = _read_json(od / f"{stem} - audit.json", {"rounds": []})
     if status.get("verdict") in ("PASS", "needs human"):
@@ -161,72 +161,67 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
         return status["verdict"]
     sources = lecture_sources(cfg, module, part, folder) + (
         notes_for(cfg, module, part, lid) if notes_docs(cfg, module)[1] else [])
-    while len(status["rounds"]) < MAX_AUDIT_ROUNDS:
-        master = (od / f"{stem} - Master.md").read_text(encoding="utf-8")
-        concepts = (od / f"{stem} - concepts.json").read_text(encoding="utf-8")
-        prompt = runner.build_prompt(
-            "03_audit_coverage.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part,
-            LECTURE_MD_FILES="the sources below", NOTES_MD_SECTIONS="(included below)", MASTER_MD="below",
-            CONCEPTS_JSON="below", OUT_DIR=od, LECTURE_STEM=stem,
-            SOURCES=_sources_text(sources), MASTER=master, CONCEPTS=concepts)
-        # a different, stronger model than the capture (Sonnet): Opus on Claude Code; Sonnet-in-agy on agy
-        model = "claude-sonnet-5-5-high" if runner_name == "agy" else "opus"
-        try:
-            text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
-        except runner.RunnerError as e:
-            if runner_name != "agy" or "quota" not in str(e).lower():
-                raise
-            # Claude-in-agy quota is small; fall back to Gemini in a fresh session (independent of the capture run)
-            log(f"{lid} audit: {model} quota reached, auditing with {runner.AGY_DEFAULT} instead")
-            model = runner.AGY_DEFAULT
-            text, usage = runner.run(cfg, prompt, runner=runner_name, model=model, timeout=3600)
-        result = json_block(text, "AUDIT")
-        counts = {k: len(result.get(k, [])) for k in ("missing", "distorted", "unsupported", "concepts_missing")}
-        status["rounds"].append({"model": model, "counts": counts, "result": result})
-        new_master = block(text, "MASTER_MD")
-        if len(new_master) < 0.9 * len(master):          # an audit adds and corrects; it must never shrink the notes
-            raise runner.RunnerError(f"{lid} audit returned a Master {len(new_master)} chars long (was {len(master)}); "
-                                     "kept the old one. Re-run the audit.")
-        (od / f"{stem} - Master.md").write_text(new_master + "\n", encoding="utf-8")
-        _write_json(od / f"{stem} - concepts.json", json_block(text))
-        _write_json(od / f"{stem} - audit.json", status)
-        log(f"{lid} audit round {len(status['rounds'])}: {counts} ({runner.describe(usage)})")
-        if not any(counts.values()):
-            status["verdict"] = "PASS"
-            break
-    else:
-        # Each round returns the notes with its own fixes applied. After the last round, accept them if nothing
-        # was missing (only wording / marking fixes remained); missing content never passes.
-        last = status["rounds"][-1]["counts"]
-        ok = last["missing"] == 0 and last["concepts_missing"] == 0 and last["distorted"] <= 2
-        status["verdict"] = "PASS" if ok else "needs human"
-        if ok:
-            status["note"] = "last round's fixes applied but not re-verified"
+    master_path, concepts_path = od / f"{stem} - Master.md", od / f"{stem} - concepts.json"
+    master = master_path.read_text(encoding="utf-8")
+    prompt = runner.build_prompt(
+        "03_audit_coverage.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
+        LECTURE_MD_FILES="the sources below", NOTES_MD_SECTIONS="(included below)", MASTER_MD="below",
+        CONCEPTS_JSON="below", OUT_DIR=od, LECTURE_STEM=stem, SOURCES=_sources_text(sources), MASTER=master,
+        CONCEPTS=concepts_path.read_text(encoding="utf-8"))
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+    result = json_block(text, "AUDIT")
+    applied, skipped = 0, []
+    for e in result.get("edits", []):
+        if e.get("find") and master.count(e["find"]) == 1:
+            master = master.replace(e["find"], e.get("replace", ""))
+            applied += 1
+        else:
+            skipped.append(e)
+    adds = result.get("missing", []) + [{"src": "audit", "text": f"> ⚠ Check (audit could not place this edit): "
+                                         f"{e.get('why', '')}: \"{e.get('find', '')}\" → \"{e.get('replace', '')}\""}
+                                        for e in skipped]
+    if adds:
+        master = master.rstrip() + "\n\n## Additions from the audit\n\n" + "\n\n".join(
+            a.get("text") or f"{a.get('item', '')} [src: {a.get('src', '')}]" for a in adds) + "\n"
+    master_path.write_text(master, encoding="utf-8")
+    if result.get("concepts_missing"):
+        _write_json(concepts_path, _read_json(concepts_path, []) + result["concepts_missing"])
+    counts = {"missing": len(result.get("missing", [])), "edits": len(result.get("edits", [])),
+              "edits_unplaced": len(skipped), "concepts_missing": len(result.get("concepts_missing", []))}
+    status["rounds"].append({"model": "sonnet", "counts": counts, "result": result})
+    status["verdict"] = "PASS"                      # every finding has been applied to the notes
     _write_json(od / f"{stem} - audit.json", status)
+    log(f"{lid} audit: {counts} applied ({runner.describe(usage)})")
     return status["verdict"]
 
 
-def merge_registry(cfg, module, part, folder, runner_name="claude", log=print):
+def topics(cfg, module, part, folder, runner_name="claude", log=print):
+    """Step 3c: 2-5 teaching topics per lecture (replaces the per-concept registry). Part-level topics.json."""
     lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
-    reg_path = part_dir(cfg, module, part) / MD_DIR / "registry.json"
-    registry = _read_json(reg_path, {"concepts": [], "merged": []})
-    if lid in registry["merged"]:
-        log(f"{lid} already in registry")
-        return
+    target = od / f"{stem} - topics.json"
+    if target.exists():
+        return log(f"{lid} topics exist")
+    reg_path = part_dir(cfg, module, part) / MD_DIR / "topics.json"
+    registry = [t for t in _read_json(reg_path, []) if not t["id"].startswith(lid + ".")]
+    concepts = _read_json(od / f"{stem} - concepts.json", [])
+    slim = [{k: c.get(k) for k in ("id", "name", "kind", "summary")} for c in concepts]
     prompt = runner.build_prompt(
-        "03b_merge_registry.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
-        REGISTRY_JSON="below", CONCEPTS_JSON="below", MASTER_MD="below", OUT_DIR=od, LECTURE_STEM=stem,
-        REGISTRY=json.dumps(registry["concepts"], ensure_ascii=False),
-        CONCEPTS=(od / f"{stem} - concepts.json").read_text(encoding="utf-8"),
-        MASTER=(od / f"{stem} - Master.md").read_text(encoding="utf-8"))
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
-    new_reg = json_block(text, "REGISTRY")
-    registry = {"concepts": new_reg if isinstance(new_reg, list) else new_reg.get("concepts", new_reg),
-                "merged": registry["merged"] + [lid]}
-    _write_json(od / f"{stem} - plan.json", json_block(text, "PLAN"))
-    _write_json(od / f"{stem} - backlinks.json", json_block(text, "BACKLINKS"))
-    _write_json(reg_path, registry)
-    log(f"{lid} merged into registry ({len(registry['concepts'])} concepts, {usage.get('seconds')}s)")
+        "03c_topics.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
+        EARLIER_TOPICS=json.dumps([{k: t.get(k) for k in ("id", "title", "why")} for t in registry],
+                                  ensure_ascii=False) or "none",
+        CONCEPTS=json.dumps(slim, ensure_ascii=False))
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=1800)
+    got = json_block(text, "TOPICS")
+    ids = {c["id"] for c in concepts}
+    placed = [c for t in got for c in t.get("concepts", [])]
+    unplaced = sorted(ids - set(placed))
+    if unplaced:                                   # every concept must sit in a topic: add leftovers to the last
+        got[-1].setdefault("concepts", []).extend(unplaced)
+    for t in got:
+        t["concepts"] = [c for c in t["concepts"] if c in ids]
+    _write_json(target, got)
+    _write_json(reg_path, registry + got)
+    log(f"{lid} topics: {[t['title'] for t in got]} ({runner.describe(usage)})")
 
 
 def _practicals(cfg, module, part, lid):
@@ -239,11 +234,19 @@ def _practicals(cfg, module, part, lid):
 
 def _inputs(cfg, module, part, folder):
     od, stem = out_dir(cfg, module, part, folder), folder.name
-    need = ["Master.md", "concepts.json", "plan.json"]
+    need = ["Master.md", "concepts.json", "topics.json"]
     missing = [n for n in need if not (od / f"{stem} - {n}").exists()]
     if missing:
-        raise runner.RunnerError(f"{stem}: missing {missing}; run capture, audit and registry first.")
+        raise runner.RunnerError(f"{stem}: missing {missing}; run capture, audit and topics first.")
     return {n.split(".")[0].upper(): (od / f"{stem} - {n}").read_text(encoding="utf-8") for n in need}
+
+
+def load_teaching(od, stem):
+    """(entries, glossary, cards). Topic-mode teaching is a dict; the first pilot lecture stored a per-concept list."""
+    t = _read_json(od / f"{stem} - teaching.json", [])
+    if isinstance(t, dict):
+        return t.get("topics", []), t.get("glossary", []), t.get("cards", [])
+    return t, [], []
 
 
 def teaching(cfg, module, part, folder, runner_name="claude", log=print):
@@ -251,69 +254,73 @@ def teaching(cfg, module, part, folder, runner_name="claude", log=print):
     if (od / f"{stem} - teaching.json").exists():
         return log(f"{lid} teaching exists")
     i = _inputs(cfg, module, part, folder)
-    prompt = runner.build_prompt("04_teaching_plan.md", MODULE_NAME=module.name, MODULE_CODE=module.code,
-                                 PART=part, MASTER_MD="below", CONCEPTS_JSON="below", PLAN_JSON="below",
-                                 OUT_DIR=od, LECTURE_STEM=stem, MASTER=i["MASTER"], CONCEPTS=i["CONCEPTS"],
-                                 PLAN=i["PLAN"])
-    ids = [c["id"] for c in json.loads(i["CONCEPTS"])]
-
-    def one(batch):
-        focus = (f"\n\n## This call\nDesign ONLY these concept ids (all of them, in full): {', '.join(batch)}. "
-                 "Reply with a JSON list of exactly those concepts.")
-        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
-        got = json_block(text)
-        log(f"{lid} teaching: {[t['id'] for t in got]} ({runner.describe(usage)})")
-        return got
-    partial = od / f"{stem} - teaching.partial.json"
-    t = _batched(partial, ids, TEACH_BATCH, one)
-    missing = sorted(set(ids) - {x["id"] for x in t})
+    prompt = runner.build_prompt("04_teaching_plan.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part,
+                                 TOPICS=i["TOPICS"], CONCEPTS=i["CONCEPTS"], MASTER=i["MASTER"])
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+    t = json_block(text)
+    want = {x["id"] for x in json.loads(i["TOPICS"])}
+    missing = sorted(want - {x.get("id") for x in t.get("topics", [])})
     if missing:
-        raise runner.RunnerError(f"{lid} teaching is missing concepts {missing}; delete {partial.name} and re-run.")
+        raise runner.RunnerError(f"{lid} teaching is missing topics {missing}")
     _write_json(od / f"{stem} - teaching.json", t)
-    partial.unlink()
-    log(f"{lid} teaching: {len(t)} concepts designed")
+    log(f"{lid} teaching: {len(t['topics'])} topics, {len(t.get('glossary', []))} terms, "
+        f"{len(t.get('cards', []))} cards ({runner.describe(usage)})")
 
 
 def exercises(cfg, module, part, folder, runner_name="claude", log=print):
     lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
-    if (od / f"{stem} - exercises.json").exists():
+    target, partial = od / f"{stem} - exercises.json", od / f"{stem} - exercises.partial.json"
+    if target.exists():
         return log(f"{lid} exercises exist")
+    if partial.exists():                           # pilot lecture: keep what the earlier (per-concept) run wrote
+        ex = _read_json(partial, {}).get("exercises", [])
+        _write_json(target, ex)
+        partial.unlink()
+        return log(f"{lid} exercises: kept {len(ex)} from the earlier run")
     i = _inputs(cfg, module, part, folder)
+    entries, _, _ = load_teaching(od, stem)
     pracs = _practicals(cfg, module, part, lid)
     profile = part_dir(cfg, module, part) / MD_DIR / "exam-profile.md"
     prompt = runner.build_prompt(
         "05_exercises.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, MASTER_MD="below",
-        CONCEPTS_JSON="below", TEACHING_JSON="below", PLAN_JSON="below", OUT_DIR=od, LECTURE_STEM=stem,
+        CONCEPTS_JSON="below", TEACHING_JSON="below", PLAN_JSON="the topics below", OUT_DIR=od, LECTURE_STEM=stem,
         PRACTICAL_MD_FILES=", ".join(n for n, _ in pracs) or "none yet",
         EXAM_PROFILE_MD="below" if profile.exists() else "not built yet",
-        NOT_EXAMINED="none stated", MASTER=i["MASTER"], CONCEPTS=i["CONCEPTS"], PLAN=i["PLAN"],
-        TEACHING=(od / f"{stem} - teaching.json").read_text(encoding="utf-8"),
+        NOT_EXAMINED="none stated", MASTER=i["MASTER"], CONCEPTS=i["CONCEPTS"], PLAN=i["TOPICS"],
+        TEACHING=json.dumps(entries, ensure_ascii=False),
         PRACTICALS=_sources_text(pracs) or "none yet",
         EXAM_PROFILE=profile.read_text(encoding="utf-8") if profile.exists()
         else "Not built yet (no past papers sorted). Use the style of formal university exam questions in this "
              "module's notation: definitions, short proofs, computations, attacks, 'explain why'.")
-    # Many exercises per concept: one call per batch of concepts keeps each reply well under output limits.
-    part_path = od / f"{stem} - exercises.partial.json"
-    done = _read_json(part_path, {"batches": [], "exercises": []})
-    ids = [c["id"] for c in json.loads(i["CONCEPTS"])]
-    batches = [ids[k:k + EX_BATCH] for k in range(0, len(ids), EX_BATCH)]
-    for b, batch in enumerate(batches):
-        if b in done["batches"]:
+    text, usage = runner.run(cfg, prompt + f"\n\nNumber ids {lid}.ex.001, {lid}.ex.002, ...", runner=runner_name,
+                             model="sonnet", timeout=3600)
+    ex = json_block(text)
+    _write_json(target, ex)
+    log(f"{lid} exercises: {len(ex)} ({runner.describe(usage)})")
+
+
+VISUAL_RE = re.compile(r"""Study\.visuals\[\s*["']([^"']+)""")
+
+
+def _visual_targets(od, stem, topics_list, entries):
+    """[(topic, teaching entry)] that still need visuals. A topic uses its own teaching entry, or (pilot
+    lecture) the teaching of its most important concept; topics already covered by a concept visual are skipped."""
+    by_id = {t["id"]: t for t in entries}
+    done_js = "".join(_read_json(od / f"{stem} - visuals.partial.json", {"items": []})["items"])
+    have = set(VISUAL_RE.findall(done_js))
+    out = []
+    for tp in topics_list:
+        if str(tp.get("prior", "")).startswith("recap") or tp["id"] in have or have & set(tp["concepts"]):
             continue
-        last = b == len(batches) - 1
-        focus = (f"\n\n## This call\nWrite exercises ONLY for these concept ids: {', '.join(batch)}. "
-                 + ("Also write this lecture's ≥ 10 interleaved questions and include every practical question."
-                    if last else "Do not write interleaved or practical questions in this call.")
-                 + f" Number ids from L{lid[1:]}.ex.{b * 100 + 1:03d}.")
-        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
-        done["exercises"] += json_block(text)
-        done["batches"].append(b)
-        _write_json(part_path, done)
-        log(f"{lid} exercises batch {b + 1}/{len(batches)}: {len(done['exercises'])} so far "
-            f"({runner.describe(usage)})")
-    _write_json(od / f"{stem} - exercises.json", done["exercises"])
-    part_path.unlink()
-    log(f"{lid} exercises: {len(done['exercises'])}")
+        entry = by_id.get(tp["id"])
+        if not entry:
+            cands = [by_id[c] for c in tp["concepts"] if c in by_id and by_id[c].get("animation")]
+            cands.sort(key=lambda e: (not e.get("hard"), -(e.get("difficulty") or 0)))
+            if not cands:
+                continue
+            entry = dict(cands[0], id=tp["id"], title=tp["title"])
+        out.append((tp, entry))
+    return out, done_js
 
 
 def visuals(cfg, module, part, folder, runner_name="claude", log=print):
@@ -323,34 +330,34 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     if target.exists():
         return log(f"{lid} visuals exist")
     i = _inputs(cfg, module, part, folder)
-    teaching = _read_json(od / f"{stem} - teaching.json", [])
+    topics_list = json.loads(i["TOPICS"])
     concepts = json.loads(i["CONCEPTS"])
-
-    def prompt_for(batch):                       # only this batch's teaching data: small input, focused output
-        return runner.build_prompt(
-            "07_lecture_page.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
-            PLAN=i["PLAN"], CONCEPTS=json.dumps([c for c in concepts if c["id"] in batch], ensure_ascii=False),
-            TEACHING=json.dumps([t for t in teaching if t.get("id") in batch], ensure_ascii=False))
-    plan = json.loads(i["PLAN"]) if i["PLAN"].strip().startswith(("[", "{")) else []
-    plan = plan.get("concepts", plan) if isinstance(plan, dict) else plan
-    recap = {p["id"] for p in plan if isinstance(p, dict) and p.get("teach") == "recap"}
-    ids = [c["id"] for c in json.loads(i["CONCEPTS"]) if c["id"] not in recap]
+    entries, _, _ = load_teaching(od, stem)
+    todo, legacy_js = _visual_targets(od, stem, topics_list, entries)
+    entry_of = {tp["id"]: e for tp, e in todo}
 
     def one(batch):
-        focus = (f"\n\n## This call\nBuild visuals ONLY for these concept ids: {', '.join(batch)}. "
+        tps = [tp for tp in topics_list if tp["id"] in batch]
+        prompt = runner.build_prompt(
+            "07_lecture_page.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
+            PLAN=json.dumps(tps, ensure_ascii=False),
+            CONCEPTS=json.dumps([c for c in concepts if any(c["id"] in tp["concepts"] for tp in tps)], ensure_ascii=False),
+            TEACHING=json.dumps([entry_of[b] for b in batch], ensure_ascii=False))
+        focus = (f"\n\n## This call\nBuild visuals ONLY for these topic ids: {', '.join(batch)}. "
                  "Your file is one of several chunks loaded on the same page: keep every helper inside it.")
-        text, usage = runner.run(cfg, prompt_for(batch) + focus, runner=runner_name, model="sonnet", timeout=3600)
+        text, usage = runner.run(cfg, prompt + focus, runner=runner_name, model="sonnet", timeout=3600)
         js = block(text, "VISUALS_JS")
         log(f"{lid} visuals: {batch} ({runner.describe(usage)})")
         return [f"// ---- {', '.join(batch)}\n(function () {{\n{js}\n}})();\n"]
-    partial = od / f"{stem} - visuals.partial.json"
-    js = "\n".join(_batched(partial, ids, VIS_BATCH, one))
-    partial.unlink()
+    partial = od / f"{stem} - visuals.topics.partial.json"
+    js = legacy_js + "\n".join(_batched(partial, [tp["id"] for tp, _ in todo], VIS_BATCH, one))
+    partial.unlink(missing_ok=True)
+    (od / f"{stem} - visuals.partial.json").unlink(missing_ok=True)
     target.write_text(js + "\n", encoding="utf-8")
     vis_dir = site_dir(cfg, module, part) / "visuals"
     vis_dir.mkdir(parents=True, exist_ok=True)
     (vis_dir / f"{lid}.js").write_text(js + "\n", encoding="utf-8")
-    log(f"{lid} visuals: {js.count('Study.visuals[')} concepts, {js.count('Study.selftest(')} self-tests")
+    log(f"{lid} visuals: {len(VISUAL_RE.findall(js))} registered, {js.count('Study.selftest(')} self-tests")
 
 
 def _render_scenes(py_file, classes, media):
@@ -377,7 +384,7 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
     index = od / f"{stem} - videos.json"
     if index.exists():
         return log(f"{lid} videos exist")
-    teaching = _read_json(od / f"{stem} - teaching.json", [])
+    teaching, _, _ = load_teaching(od, stem)
     if not any(t.get("video") for t in teaching):
         _write_json(index, [])
         return log(f"{lid} videos: none planned")
@@ -415,7 +422,7 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
         f" ({runner.describe(usage)})")
 
 
-TEACH_BATCH, VIS_BATCH = 5, 2
+VIS_BATCH = 3            # topics per visuals call
 
 
 def _batched(partial, ids, size, call):
@@ -443,7 +450,7 @@ def _nlm(*a, **k):
     return nlm_videos(*a, **k)
 
 
-STEPS = {"capture": capture, "audit": audit, "registry": merge_registry, "teaching": teaching,
+STEPS = {"capture": capture, "audit": audit, "topics": topics, "teaching": teaching,
          "exercises": exercises, "visuals": visuals, "videos": videos, "nlm": _nlm}
 
 
@@ -465,6 +472,9 @@ def run_lecture(cfg, module, part, number, steps, runner_name="claude", log=prin
         futures = {s: pool.submit(STEPS[s], cfg, module, part, folder, runner_name=runner.pick(runner_name, s), log=log)
                    for s in group}
     errors = {s: f.exception() for s, f in futures.items() if f.exception()}
+    limits = [e for e in errors.values() if isinstance(e, runner.LimitReached)]
+    if limits:                                     # let the driver sleep until the window resets
+        raise limits[0]
     if errors:
         raise runner.RunnerError("; ".join(f"{s}: {e}" for s, e in errors.items()))
 

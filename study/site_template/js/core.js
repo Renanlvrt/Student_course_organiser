@@ -339,11 +339,14 @@
     next();
   };
 
+  S.lectureCards = (L) => (L.cards || []).map((c, k) => Object.assign({ id: L.id + ".c" + k }, c)).concat(
+    (L.teaching || []).flatMap((t) => (t.recall_cards || []).map((c, k) => Object.assign({ id: t.id + ".card" + k, concept: t.id }, c))));
+
   /* ---------------------------------------------------------------- sidebar */
   S.nav = function (active) {
     const side = document.querySelector(".side");
     if (!side || !window.COURSE) return;
-    const lectureCards = (window.LECTURES ? Object.values(LECTURES) : []).flatMap((l) => (l.teaching || []).flatMap((t) => (t.recall_cards || [])));
+    const lectureCards = (window.LECTURES ? Object.values(LECTURES) : []).flatMap(S.lectureCards);
     const lecLink = (l) => {
       const ids = l.concepts || [];
       const good = ids.filter((id) => S.progress.status(id) === "good").length;
