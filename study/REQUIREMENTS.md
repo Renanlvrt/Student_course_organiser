@@ -219,3 +219,10 @@ This is a record of what I asked for. Open questions are at the bottom and are f
     8 Manim videos, 6 concept visuals; only its topics and the missing topic visuals are added.
 - Bugs fixed: usage-limit errors inside the parallel steps now make the driver sleep instead of failing;
   NotebookLM login is checked with a real call (its cookies had expired although `auth check` said valid).
+- **Round 10 (2026-10-22 morning):** finish all Crypto lectures by 10:00, at most **one 5-hour window per
+  sub-module (part)**; "an explanation of all concepts but I don't need visuals and interactive things for all
+  of them"; "Yes I want manim video, maybe one every few lectures that are really hard to understand".
+  → Lean mode: lectures 4, 6, 7, 9–13, 16, 17 built from the notes chapters (`notes_lectures.json`), 5 in
+    parallel; `concept_notes` explain every concept; visuals only for the hardest topic (2 for dense lectures);
+    audit + topics on Haiku; exercises one call with smaller minimums; Manim films via
+    `python -m study films <Module> <Part> --every 3` (hardest topic per group of 3 lectures).

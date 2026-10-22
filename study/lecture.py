@@ -374,6 +374,31 @@ def visuals(cfg, module, part, folder, runner_name="claude", log=print):
     log(f"{lid} visuals: {len(VISUAL_RE.findall(js))} registered, {js.count('Study.selftest(')} self-tests")
 
 
+def part_videos(cfg, module, part, every=3, log=print):
+    """One Manim film per `every` lectures, for the hardest topic in each group; lectures that already have a
+    film count as covered. Claude designs the storyboard and writes the scene in one call; Manim renders locally."""
+    folders = [f for f in lecture_folders(cfg, module, part)
+               if (out_dir(cfg, module, part, f) / f"{f.name} - teaching.json").exists()]
+    for g in range(0, len(folders), every):
+        group = folders[g:g + every]
+        if any(_read_json(out_dir(cfg, module, part, f) / f"{f.name} - videos.json", []) for f in group):
+            continue
+        best = None
+        for f in group:
+            od = out_dir(cfg, module, part, f)
+            entries = {t["id"]: t for t in load_teaching(od, f.name)[0]}
+            for tp in _read_json(od / f"{f.name} - topics.json", []):
+                score = (bool(tp.get("hard")), len(tp.get("concepts", [])))
+                if tp["id"] in entries and (best is None or score > best[0]):
+                    best = (score, f, dict(entries[tp["id"]], id=tp["id"], title=tp["title"]))
+        if not best:
+            continue
+        _, f, entry = best
+        entry["video"] = {"title": entry["title"], "shots": []}   # empty: the video step designs the shots
+        log(f"film for {lecture_id(f)} {entry['id']} ({entry['title']})")
+        videos(cfg, module, part, f, log=log, extra=[entry])
+
+
 def _render_scenes(py_file, classes, media):
     """Render each Scene class with Manim; returns ({class: mp4 path}, {class: error tail})."""
     import subprocess
@@ -389,16 +414,18 @@ def _render_scenes(py_file, classes, media):
     return done, failed
 
 
-def videos(cfg, module, part, folder, runner_name="claude", log=print):
-    """Step 7c: Claude writes one Manim scene per `video` storyboard; Manim renders them locally (free)."""
+def videos(cfg, module, part, folder, runner_name="claude", log=print, extra=None):
+    """Step 7c: Claude writes one Manim scene per `video` storyboard; Manim renders them locally (free).
+    `extra`: teaching entries chosen by part_videos (their storyboard is designed in the same call)."""
     import shutil
     import tempfile
     from .site import site_dir
     lid, od, stem = lecture_id(folder), out_dir(cfg, module, part, folder), folder.name
     index = od / f"{stem} - videos.json"
-    if index.exists():
+    previous = _read_json(index, []) if extra else []
+    if index.exists() and not extra:
         return log(f"{lid} videos exist")
-    teaching, _, _ = load_teaching(od, stem)
+    teaching = extra or load_teaching(od, stem)[0]
     if not any(t.get("video") for t in teaching):
         _write_json(index, [])
         return log(f"{lid} videos: none planned")
@@ -407,7 +434,7 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
                                  MASTER=(od / f"{stem} - Master.md").read_text(encoding="utf-8"))
     text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
     code, listing = block(text, "MANIM_PY"), json_block(text, "VIDEOS")
-    py = od / f"{stem} - videos.py"
+    py = od / (f"{stem} - videos-{len(previous) + 1}.py" if extra else f"{stem} - videos.py")
     out = site_dir(cfg, module, part) / "videos"
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -431,7 +458,7 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
                 name = re.sub(r"[^A-Za-z0-9]+", "_", v["concept"]) + ".mp4"
                 shutil.copy2(done[v["class"]], out / name)
                 result.append({"concept": v["concept"], "title": v.get("title", ""), "file": "videos/" + name})
-    _write_json(index, result)
+    _write_json(index, previous + result)
     log(f"{lid} videos: {len(result)} rendered" + (f", FAILED: {sorted(failed)}" if failed else "") +
         f" ({runner.describe(usage)})")
 

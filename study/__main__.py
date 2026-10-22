@@ -35,6 +35,10 @@ def main(argv=None):
     al.add_argument("module")
     al.add_argument("--part", action="append", help="only this part (repeatable)")
     al.add_argument("--parallel", type=int, default=1, help="lectures built at the same time")
+    vd = sub.add_parser("films", help="Manim films for the hardest topic of every few lectures")
+    vd.add_argument("module")
+    vd.add_argument("part")
+    vd.add_argument("--every", type=int, default=3)
     pb = sub.add_parser("publish", help="Push the built sites to the module's GitHub repo + Pages (phone access)")
     pb.add_argument("module")
     args = ap.parse_args(argv)
@@ -61,6 +65,9 @@ def main(argv=None):
     elif args.cmd == "all":
         from .run_all import run_all
         run_all(cfg, module, args.part, args.parallel)
+    elif args.cmd == "films":
+        from .lecture import part_videos
+        part_videos(cfg, module, args.part, args.every)
     elif args.cmd == "publish":
         from .publish import publish
         publish(cfg, module)

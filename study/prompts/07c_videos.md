@@ -3,8 +3,10 @@
 **Runner:** Claude Code. **Unit:** ONE lecture. The pipeline renders your file locally with Manim Community
 v0.19 (`manim -qm`, 1280×720, 30 fps) and embeds each video under its concept on the site.
 
-For every concept whose teaching data has a `video` storyboard, write **one `Scene` class** that films that
-storyboard, shot by shot, in order. Each video is **30–60 seconds**, silent, with captions on screen.
+For every topic or concept whose teaching data has a `video` storyboard, write **one `Scene` class** that
+films that storyboard, shot by shot, in order. If its `shots` list is empty, first design 5–8 shots yourself
+from the explanation (the whole idea end to end: setup, mechanism, worked example, the key insight), then film
+them. In the JSON list, `concept` is that topic or concept id. Each video is **30–60 seconds**, silent, with captions on screen.
 
 ## Style (match the site)
 - `config.background_color = "#fbfbfd"`. Text and lines in ink `#1d1d1f`, secondary `#6e6e73`.
