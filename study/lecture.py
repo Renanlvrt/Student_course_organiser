@@ -130,6 +130,31 @@ def notes_for(cfg, module, part, lid):
     return out
 
 
+CHUNK_CHARS = 28000      # source text per capture call: keeps the reply (full notes) under the output limit
+
+
+def _chunks(sources):
+    """Split [(name, markdown)] into groups of whole pages of at most CHUNK_CHARS characters."""
+    chunks, cur, size = [], [], 0
+    for name, md in sources:
+        head, pages = split_pages(md if md.startswith("\n") else "\n" + md)
+        if not pages:
+            pages = {1: md}
+        for n in sorted(pages):
+            text = f"\n<!-- page {n} -->\n{pages[n].strip()}\n"
+            if cur and size + len(text) > CHUNK_CHARS:
+                chunks.append(cur)
+                cur, size = [], 0
+            if cur and cur[-1][0] == name:
+                cur[-1] = (name, cur[-1][1] + text)
+            else:
+                cur.append((name, text))
+            size += len(text)
+    if cur:
+        chunks.append(cur)
+    return chunks or [sources]
+
+
 def _sources_text(sources):
     return "\n\n".join(f"### SOURCE: {name}\n<<<SOURCE\n{md}\nSOURCE>>>" for name, md in sources)
 
@@ -145,16 +170,39 @@ def capture(cfg, module, part, folder, runner_name="claude", log=print):
     notes = notes_for(cfg, module, part, lid) if notes_docs(cfg, module)[1] else []
     prev = [c for f in lecture_folders(cfg, module, part) if lecture_id(f) < lid
             for c in _read_json(out_dir(cfg, module, part, f) / f"{f.name} - concepts.json", [])]
-    prompt = runner.build_prompt(
-        "02_capture_lecture.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
-        LECTURE_MD_FILES=", ".join(n for n, _ in lect), NOTES_MD_SECTIONS=", ".join(n for n, _ in notes) or "none",
-        READING_MD_FILES="none", PREVIOUS_CONCEPTS_JSON=json.dumps([{"id": c["id"], "name": c["name"]} for c in prev]),
-        SOURCES=_sources_text(lect + notes))
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
-    master, concepts = block(text, "MASTER_MD"), json_block(text)
-    (od / f"{stem} - Master.md").write_text(master + "\n", encoding="utf-8")
+    chunks = _chunks(lect + notes)
+    partial_path = od / f"{stem} - capture.partial.json"
+    part_state = _read_json(partial_path, {"done": [], "master": [], "concepts": [], "selfaudit": []})
+    usage = {}
+    for k, chunk in enumerate(chunks):
+        if k in part_state["done"]:
+            continue
+        prompt = runner.build_prompt(
+            "02_capture_lecture.md", MODULE_NAME=module.name, MODULE_CODE=module.code, PART=part, LECTURE_ID=lid,
+            LECTURE_MD_FILES=", ".join(n for n, _ in lect), NOTES_MD_SECTIONS=", ".join(n for n, _ in notes) or "none",
+            READING_MD_FILES="none", PREVIOUS_CONCEPTS_JSON=json.dumps([{"id": c["id"], "name": c["name"]} for c in prev]),
+            SOURCES=_sources_text(chunk))
+        if len(chunks) > 1:                       # a long lecture is captured a few pages at a time
+            used = [c["id"] for c in part_state["concepts"]]
+            prompt += (f"\n\n## This call\nPart {k + 1} of {len(chunks)} of this lecture: capture ONLY the pages "
+                       f"given above, completely. Concept ids already used (do not reuse): {used or 'none'}.")
+        text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+        part_state["master"].append(block(text, "MASTER_MD"))
+        part_state["concepts"] += json_block(text)
+        part_state["selfaudit"].append(text.split("JSON>>>")[-1].strip())
+        part_state["done"].append(k)
+        _write_json(partial_path, part_state)
+        if len(chunks) > 1:
+            log(f"{lid} capture part {k + 1}/{len(chunks)} ({runner.describe(usage)})")
+    seen, concepts = set(), []
+    for c in part_state["concepts"]:
+        if c["id"] not in seen:
+            seen.add(c["id"])
+            concepts.append(c)
+    (od / f"{stem} - Master.md").write_text("\n\n".join(part_state["master"]) + "\n", encoding="utf-8")
     _write_json(od / f"{stem} - concepts.json", concepts)
-    (od / f"{stem} - capture-selfaudit.md").write_text(text.split("JSON>>>")[-1].strip() + "\n", encoding="utf-8")
+    (od / f"{stem} - capture-selfaudit.md").write_text("\n\n".join(part_state["selfaudit"]) + "\n", encoding="utf-8")
+    partial_path.unlink()
     log(f"{lid} captured: {len(concepts)} concepts ({runner.describe(usage)})")
 
 
