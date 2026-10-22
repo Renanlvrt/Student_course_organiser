@@ -43,6 +43,8 @@ def build_site(cfg, module, part, log=print):
         data = {"id": lid, "title": stem, "concepts": concepts,
                 "topics": _read_json(od / f"{stem} - topics.json", []),
                 "glossary": glossary, "cards": cards,
+                "concept_notes": (lambda t: t.get("concept_notes", {}) if isinstance(t, dict) else {})(
+                    _read_json(od / f"{stem} - teaching.json", {})),
                 "teaching": entries,
                 "exercises": _read_json(od / f"{stem} - exercises.json", []),
                 "videos": _read_json(od / f"{stem} - videos.json", []) +

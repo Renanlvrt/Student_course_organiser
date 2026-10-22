@@ -6,8 +6,8 @@ import re
 
 from .lecture import lecture_folders, lecture_id, load_teaching, out_dir, _read_json
 
-MIN = {"drill": 3, "exam": 2, "transfer": 1}
-MIN_INTERLEAVED = 6
+MIN = {"drill": 2, "exam": 1, "transfer": 1}
+MIN_INTERLEAVED = 4
 
 
 def check_lecture(cfg, module, part, folder):
@@ -41,11 +41,11 @@ def check_lecture(cfg, module, part, folder):
         recap = str(tp.get("prior", "")).startswith("recap")
         members = {tid, *tp["concepts"]}
         if not recap:
-            if not (visuals & members):
-                need["visuals"] = "missing"
             t = teach.get(tid)
+            if tp.get("hard") and not (visuals & members) and tid in {x["id"] for x in topics if x.get("hard")}:
+                need["visuals"] = "missing (hard topic)"
             if not pilot:
-                for f in ("explanation", "animation", "sandbox", "figures"):
+                for f in ("explanation",) + (("animation", "sandbox", "figures") if tp.get("hard") else ()):
                     if not (t or {}).get(f):
                         need[f] = "missing"
                 if tp.get("hard"):

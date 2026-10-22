@@ -33,8 +33,14 @@ def part_dir(cfg, module, part):
 
 
 def lecture_folders(cfg, module, part):
-    return sorted(d for d in part_dir(cfg, module, part).iterdir()
-                  if d.is_dir() and re.match(r"Lecture \d+", d.name))
+    """Lecture folders of a part, plus lectures known only from the module notes (notes_lectures.json); a real
+    folder wins when its slides arrive."""
+    pd = part_dir(cfg, module, part)
+    real = [d for d in pd.iterdir() if d.is_dir() and re.match(r"Lecture \d+", d.name)] if pd.is_dir() else []
+    nums = {int(re.match(r"Lecture (\d+)", d.name).group(1)) for d in real}
+    virtual = [pd / f"Lecture {v['n']:02d} - {v['title']}"
+               for v in _read_json(pd / MD_DIR / "notes_lectures.json", []) if v["n"] not in nums]
+    return sorted(real + virtual, key=lambda d: int(re.match(r"Lecture (\d+)", d.name).group(1)))
 
 
 def lecture_id(folder):
@@ -168,7 +174,7 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
         LECTURE_MD_FILES="the sources below", NOTES_MD_SECTIONS="(included below)", MASTER_MD="below",
         CONCEPTS_JSON="below", OUT_DIR=od, LECTURE_STEM=stem, SOURCES=_sources_text(sources), MASTER=master,
         CONCEPTS=concepts_path.read_text(encoding="utf-8"))
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=3600)
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="haiku", timeout=3600)
     result = json_block(text, "AUDIT")
     applied, skipped = 0, []
     for e in result.get("edits", []):
@@ -188,7 +194,7 @@ def audit(cfg, module, part, folder, runner_name="claude", log=print):
         _write_json(concepts_path, _read_json(concepts_path, []) + result["concepts_missing"])
     counts = {"missing": len(result.get("missing", [])), "edits": len(result.get("edits", [])),
               "edits_unplaced": len(skipped), "concepts_missing": len(result.get("concepts_missing", []))}
-    status["rounds"].append({"model": "sonnet", "counts": counts, "result": result})
+    status["rounds"].append({"model": "haiku", "counts": counts, "result": result})
     status["verdict"] = "PASS"                      # every finding has been applied to the notes
     _write_json(od / f"{stem} - audit.json", status)
     log(f"{lid} audit: {counts} applied ({runner.describe(usage)})")
@@ -210,7 +216,7 @@ def topics(cfg, module, part, folder, runner_name="claude", log=print):
         EARLIER_TOPICS=json.dumps([{k: t.get(k) for k in ("id", "title", "why")} for t in registry],
                                   ensure_ascii=False) or "none",
         CONCEPTS=json.dumps(slim, ensure_ascii=False))
-    text, usage = runner.run(cfg, prompt, runner=runner_name, model="sonnet", timeout=1800)
+    text, usage = runner.run(cfg, prompt, runner=runner_name, model="haiku", timeout=1800)
     got = json_block(text, "TOPICS")
     ids = {c["id"] for c in concepts}
     placed = [c for t in got for c in t.get("concepts", [])]
@@ -220,7 +226,8 @@ def topics(cfg, module, part, folder, runner_name="claude", log=print):
     for t in got:
         t["concepts"] = [c for c in t["concepts"] if c in ids]
     _write_json(target, got)
-    _write_json(reg_path, registry + got)
+    with REGISTRY_LOCK:
+        _write_json(reg_path, [t for t in _read_json(reg_path, []) if not t["id"].startswith(lid + ".")] + got)
     log(f"{lid} topics: {[t['title'] for t in got]} ({runner.describe(usage)})")
 
 
@@ -307,10 +314,16 @@ def _visual_targets(od, stem, topics_list, entries):
     lecture) the teaching of its most important concept; topics already covered by a concept visual are skipped."""
     by_id = {t["id"]: t for t in entries}
     done_js = "".join(_read_json(od / f"{stem} - visuals.partial.json", {"items": []})["items"])
-    have = set(VISUAL_RE.findall(done_js))
+    have = set(VISUAL_RE.findall(done_js + "".join(
+        _read_json(od / f"{stem} - visuals.topics.partial.json", {"items": []})["items"])))
     out = []
-    for tp in topics_list:
+    budget = vis_budget(topics_list) - sum(1 for tp in topics_list if tp["id"] in have)
+    for tp in sorted(topics_list, key=lambda t: not t.get("hard")):
+        if budget <= 0:
+            break
         if str(tp.get("prior", "")).startswith("recap") or tp["id"] in have or have & set(tp["concepts"]):
+            continue
+        if not tp.get("hard") and any(t.get("hard") for t in topics_list):
             continue
         entry = by_id.get(tp["id"])
         if not entry:
@@ -320,6 +333,7 @@ def _visual_targets(od, stem, topics_list, entries):
                 continue
             entry = dict(cands[0], id=tp["id"], title=tp["title"])
         out.append((tp, entry))
+        budget -= 1
     return out, done_js
 
 
@@ -423,16 +437,23 @@ def videos(cfg, module, part, folder, runner_name="claude", log=print):
 
 
 VIS_BATCH = 3            # topics per visuals call
+REGISTRY_LOCK = __import__("threading").Lock()
+
+
+def vis_budget(topics_list):
+    """Visuals only where they pay off: the hard topics, at most 1 per lecture (2 for a dense lecture)."""
+    return 2 if len(topics_list) >= 4 else 1
 
 
 def _batched(partial, ids, size, call):
     """Run call(batch) over ids in batches, saving after each so an interrupted step resumes where it stopped."""
     done = _read_json(partial, {"batches": [], "items": []})
     for b in range(0, len(ids), size):
-        if b in done["batches"]:
+        key = ",".join(ids[b:b + size])
+        if key in done["batches"]:
             continue
         done["items"] += call(ids[b:b + size])
-        done["batches"].append(b)
+        done["batches"].append(key)
         _write_json(partial, done)
     return done["items"]
 

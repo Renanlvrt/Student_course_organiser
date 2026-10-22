@@ -50,6 +50,7 @@
     const teach = Object.fromEntries((L.teaching || []).map((t) => [t.id, t]));
     const topics = L.topics || [], byId = Object.fromEntries((L.concepts || []).map((c) => [c.id, c]));
     lectureGlossary = L.glossary || [];
+    conceptNotes = L.concept_notes || {};
     const plan = Object.fromEntries(((L.plan && (L.plan.concepts || L.plan)) || []).map((p) => [p.id, p]));
     const order = (L.concepts || []).slice().sort((a, b) => ((teach[a.id] || {}).learning_order || 99) - ((teach[b.id] || {}).learning_order || 99));
     const exs = L.exercises || [];
@@ -117,7 +118,7 @@
     }
     function ideaCard(c) {
       return h("section", { class: "idea read", id: cssId(c.id), "data-concept": c.id },
-        h("h3", {}, c.name), S.mdEl("div", c.summary || ""),
+        h("h3", {}, c.name), S.mdEl("div", conceptNotes[c.id] || c.summary || ""),
         (c.src || []).length ? h("p", { class: "src ui" }, "Source: " + [].concat(c.src).join("; ")) : "");
     }
     function recapOf(cid) { const pl = plan[cid]; return pl && (pl.teach === "recap" || pl.action === "recap") ? pl : null; }
@@ -128,7 +129,7 @@
     if (location.hash) setTimeout(() => { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }, 50);
   }
   const cssId = (id) => "c-" + String(id).replace(/[^A-Za-z0-9_-]/g, "-");
-  let lectureGlossary = [];
+  let lectureGlossary = [], conceptNotes = {};
   function glossaryList(terms, withLinks) {
     return h("dl", { class: "glossary" }, terms.flatMap((g) => [
       h("dt", {}, S.mdEl("span", g.term), withLinks && g.concept ? h("a", { class: "from ui", href: "#" + cssId(g.concept.id), onclick: () => { const b = document.querySelector('.tabs [data-k="learn"]'); if (b) b.click(); } }, g.concept.name) : ""),

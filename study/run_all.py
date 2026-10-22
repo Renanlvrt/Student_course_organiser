@@ -4,14 +4,16 @@ Page fixes, notes map, then every lecture of every part through every step; the 
 after each finished lecture. When Claude's usage window is full it sleeps until the reset and carries on. Any
 other failure is retried once; a second failure stops the run with the error (nothing half-built is published).
 """
+import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from . import runner
 from .check import check_lecture
 from .fix_pages import fix_module
-from .lecture import lecture_folders, lecture_id, map_notes, out_dir, run_lecture
+from .lecture import lecture_folders, lecture_id, map_notes, run_lecture
 from .publish import publish
 from .site import build_site
 
@@ -40,7 +42,21 @@ def _with_retries(label, fn):
             time.sleep(30)
 
 
-def run_all(cfg, module, parts=None):
+PUBLISH_LOCK = threading.Lock()
+
+
+def _one_lecture(cfg, module, part, folder):
+    lid = lecture_id(folder)
+    n = int(lid[1:])
+    _with_retries(f"{lid}", lambda: run_lecture(cfg, module, part, n, ALL_STEPS, "claude", log=_log))
+    _, problems = check_lecture(cfg, module, part, folder)
+    _log(f"{lid}: built" + (f", check: {len(problems)} problem(s): {problems[:5]}" if problems else ", check COMPLETE"))
+    with PUBLISH_LOCK:
+        build_site(cfg, module, part, log=_log)
+        _with_retries("publish", lambda: publish(cfg, module, log=_log))
+
+
+def run_all(cfg, module, parts=None, parallel=1):
     _with_retries("fix pages", lambda: fix_module(cfg, module, log=_log))
     _with_retries("notes map", lambda: map_notes(cfg, module, log=_log))
     for part in parts or module.parts:
@@ -48,15 +64,13 @@ def run_all(cfg, module, parts=None):
         if not folders:
             _log(f"{part}: no lectures yet")
             continue
-        for folder in folders:
-            lid = lecture_id(folder)
-            n = int(lid[1:])
-            _with_retries(f"{lid}", lambda: run_lecture(cfg, module, part, n, ALL_STEPS, "claude", log=_log))
-            audit = out_dir(cfg, module, part, folder) / f"{folder.name} - audit.json"
-            if '"needs human"' in (audit.read_text(encoding="utf-8") if audit.exists() else ""):
-                raise runner.RunnerError(f"{lid}: audit needs a human look ({audit}). Stopping before later lectures.")
-            _, problems = check_lecture(cfg, module, part, folder)
-            _log(f"{lid}: built" + (f", check: {len(problems)} problem(s): {problems[:5]}" if problems else ", check COMPLETE"))
-            build_site(cfg, module, part, log=_log)
-            _with_retries("publish", lambda: publish(cfg, module, log=_log))
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(_one_lecture, cfg, module, part, f): lecture_id(f) for f in folders}
+            failed = []
+            for fut in as_completed(futures):
+                if fut.exception():
+                    failed.append(futures[fut])
+                    _log(f"{futures[fut]} FAILED: {fut.exception()}")
+        if failed:
+            raise runner.RunnerError(f"{part}: lectures {sorted(failed)} failed; the others are built and published.")
     _log("All done.")

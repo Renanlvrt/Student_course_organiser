@@ -13,6 +13,7 @@ Reply with one JSON object between `<<<JSON` and `JSON>>>`:
 {"glossary": [{"term": "negligible function", "plain": "everyday meaning a first-year student gets at once",
                "formal": "the course's exact definition in LaTeX [src: …], or empty if the course gives none"}],
  "cards": [{"concept": "L03.lfsr", "front": "...", "back": "...", "layer": "recall|understanding|boundaries"}],
+ "concept_notes": {"L03.lfsr": "2-4 sentences that explain this concept in plain words, with its key formula or example"},
  "topics": [
   {"id": "L03.t2", "learning_order": 2, "hook": "the question this topic answers, in one sentence",
    "terms": ["glossary terms this topic uses"],
@@ -38,12 +39,12 @@ Reply with one JSON object between `<<<JSON` and `JSON>>>`:
   layers across the lecture. Follow the generating-stem-flashcards skill.
 - **Topics**: one entry per topic id given, in teaching order. `prior: extends …` → teach only the new aspects
   and say what is assumed; `prior: recap …` → only `hook`, a short `explanation` and `exam_tips` (no visuals).
-- **Visuals**: each topic gets one `animation` and one `sandbox` (the sandbox runs the real computation in
-  JS), plus one or two `figures` and a `table` where things can be compared or traced. A topic marked `hard`
-  may add one entry in `extra_animations` (e.g. walking through the proof or the attack).
-- **Video**: set `video` on **at most one topic per lecture**, the hardest one, if a 30–60 s silent film adds
-  something the animation does not (a whole proof or attack end to end):
-  `{"title": "...", "shots": ["what is on screen and what moves + caption", "..."]}` (4–8 shots). Else `null`.
+- **concept_notes: explain every concept** of the inventory (every id), 2–4 sentences each, plain words first.
+- **Visuals are only for the hard topics** (`hard: true`): one `animation`, one `sandbox` (runs the real
+  computation in JS) and one `figure`. Every other topic: leave `animation`, `sandbox`, `figures` and
+  `extra_animations` empty, and teach it with the explanation, examples and a `table` where useful.
+- `video` is always `null` (videos are made separately).
+- Keep it tight: no repetition between the explanation, concept_notes and cards.
 - Faithful to the notes and in the course's notation; anything you add is marked `💡 Added`.
 
 ## Topics (step 3c)

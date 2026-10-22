@@ -34,6 +34,7 @@ def main(argv=None):
     al = sub.add_parser("all", help="Build everything unattended: fixes, notes map, every lecture, site, publish")
     al.add_argument("module")
     al.add_argument("--part", action="append", help="only this part (repeatable)")
+    al.add_argument("--parallel", type=int, default=1, help="lectures built at the same time")
     pb = sub.add_parser("publish", help="Push the built sites to the module's GitHub repo + Pages (phone access)")
     pb.add_argument("module")
     args = ap.parse_args(argv)
@@ -59,7 +60,7 @@ def main(argv=None):
         build_site(cfg, module, args.part)
     elif args.cmd == "all":
         from .run_all import run_all
-        run_all(cfg, module, args.part)
+        run_all(cfg, module, args.part, args.parallel)
     elif args.cmd == "publish":
         from .publish import publish
         publish(cfg, module)
