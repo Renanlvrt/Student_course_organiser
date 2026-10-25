@@ -3,3 +3,6 @@ PDF.js 6.4.299 generic viewer (https://github.com/mozilla/pdf.js, Apache-2.0, se
 
 One local change, in `web/viewer.html`: it loads `../../../reader.js` and `../../../clip.js` before the viewer,
 and its CSP allows inline styles (`style-src 'self' 'unsafe-inline'`) and local files (`connect-src ... file:`).
+
+`build/pdf.mjs` and `build/pdf.worker.mjs` start with a one-line `Math.sumPrecise` polyfill (for Chromium builds without it,
+where embedded TeX fonts otherwise fail to load).

@@ -1,3 +1,4 @@
+if (!Math.sumPrecise) Math.sumPrecise = (it) => { let s = 0; for (const v of it) s += v; return s; };   // alto: older Chromium
 /**
  * @licstart The following is the entire license notice for the
  * JavaScript code in this page

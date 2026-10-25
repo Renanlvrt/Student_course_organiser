@@ -46,14 +46,21 @@
     .toast button:hover { background: rgba(148,163,184,.4); }
   `;
 
-  function makeHost() {
+  // Hosts live in the browser's top layer (Popover API): above every page layer and stacking context, so the
+  // page can't react to the drag (Overleaf's draggable tabs, editors that grab the mouse...).
+  function makeHost(small) {
     const host = document.createElement("alto-clip");
-    host.style.cssText = "position:fixed;top:0;left:0;z-index:2147483647";   // above the page's own stacking contexts
+    host.setAttribute("popover", "manual");
+    host.style.cssText = small
+      ? "position:fixed;inset:auto 0 0 auto;width:auto;height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible"
+      : "position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;" +
+        "background:transparent;overflow:visible;z-index:2147483647";
     const root = host.attachShadow({ mode: "closed" });
     const sheet = new CSSStyleSheet();             // constructable sheets are not blocked by page CSPs
     sheet.replaceSync(CSS);
     root.adoptedStyleSheets = [sheet];
-    (document.body || document.documentElement).appendChild(host);
+    document.documentElement.appendChild(host);
+    try { host.showPopover(); } catch (e) { host.style.zIndex = "2147483647"; }   // no Popover API: highest z-index
     return { host, root };
   }
 
@@ -217,7 +224,7 @@
 
   function toast(message, save, error) {
     if (lastToast) lastToast.remove();
-    const { host, root } = makeHost();
+    const { host, root } = makeHost(true);
     lastToast = host;
     const t = el("div", "toast" + (error ? " err" : ""));
     const span = el("span");
@@ -240,9 +247,13 @@
     boxes = boxes.slice().sort((a, b) => a.page.top - b.page.top || a.page.left - b.page.left);
     const sx = scrollX, sy = scrollY;
     const client = (p, ox = sx, oy = sy) => DOMRect.fromRect({ x: p.left - ox, y: p.top - oy, width: p.width, height: p.height });
-    const plan = mode === "text" ? extract(boxes.map((b) => client(b.page))) : null;
+    // PDF viewers inside the page (Overleaf's preview, other PDF.js viewers): their text layer is positioned text,
+    // laid out with the same engine as the built-in reader instead of the HTML walker.
+    const pdfLayers = mode === "text" ? boxes.map((b) => pdfTextItems(client(b.page), sx, sy)) : [];
+    const embeddedPdf = pdfLayers.length && pdfLayers.every((items) => items && items.length);
+    const plan = mode === "text" && !embeddedPdf ? extract(boxes.map((b) => client(b.page))) : null;
     const toPage = (r) => DOMRect.fromRect({ x: r.left + sx, y: r.top + sy, width: r.width, height: r.height });
-    if (plan) for (const v of [...plan.visuals, ...plan.backdrops]) v.page = toPage(v.rect);
+    if (plan) for (const v of plan.visuals) v.page = toPage(v.rect);
 
     const shots = [];
     const inView = (p, ox, oy) => p.top - oy >= 0 && p.bottom - oy <= innerHeight && p.left - ox >= 0 && p.right - ox <= innerWidth;
@@ -263,27 +274,24 @@
       const pieces = [];
       for (const b of boxes) pieces.push(await crop(b.page));
       if (plan) for (const v of plan.visuals) v.blob = await crop(v.page);
-      if (plan) {
-        for (const bd of plan.backdrops) {                 // highlight light text with the colour that was behind it
-          let colour = await dominantColour(await crop(bd.page));
-          const lightText = luminance(getComputedStyle(bd.src).color) > 0.6;
-          if (colour && lightText && luminance(colour) > 0.6) colour = "#404040";   // light text on a light photo: keep it readable
-          if (!colour || luminance(colour) > 0.93) continue;      // plain white behind: nothing to add
-          const wrap = (nodes) => {
-            const span = document.createElement("span");
-            span.style.backgroundColor = colour;
-            nodes[0].before(span);
-            for (const n of nodes) span.appendChild(n);
-          };
-          const kids = [...bd.node.childNodes];
-          if (kids.some((n) => n.nodeType === 1 && !/^(SPAN|A|B|STRONG|I|EM|U|S|SUB|SUP|MARK|SMALL|CODE|KBD|SAMP|BR|IMG)$/.test(n.tagName))) {
-            for (const n of kids) if (n.nodeType === Node.TEXT_NODE && n.data.trim()) wrap([n]);   // only its own text: blocks inside get theirs
-          } else if (kids.length) wrap(kids);
-        }
-      }
       const png = await stack(pieces, shots[0].ratio);
       let html, text = "", summary;
-      if (plan) {
+      if (embeddedPdf) {
+        const parts = [];
+        for (let k = 0; k < boxes.length; k++) {
+          const b = boxes[k].page, s = await shotFor(b);
+          const bmp = await createImageBitmap(pieces[k]);
+          const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+          canvas.getContext("2d", { willReadFrequently: true }).drawImage(bmp, 0, 0);
+          // page CSS pixels with y growing upwards, like PDF space; the raster is the screenshot of the box
+          const v1 = { convertToViewportPoint: (x, y) => [x, -y], convertToPdfPoint: (x, y) => [x, -y] };
+          const raster = { canvas, box1: { x: b.left, y: b.top }, scale: s.ratio, v1 };
+          parts.push(await layoutItems(pdfLayers[k], [b.left, -b.bottom, b.right, -b.top], raster, 0.75));
+        }
+        html = parts.map((x) => x.html).join("");
+        text = parts.map((x) => x.text).filter(Boolean).join("\n\n");
+        summary = "Copied text from the PDF · Ctrl+V";
+      } else if (plan) {
         for (const v of plan.visuals) v.node.src = await blobToDataUri(v.blob);
         html = plan.root.outerHTML;
         text = plan.text;
@@ -299,6 +307,29 @@
     } finally {
       if (scrollX !== sx || scrollY !== sy) window.scrollTo(sx, sy);
     }
+  }
+
+  // Text items of a PDF.js text layer inside `sel` (client coords), in page CSS pixels with y growing upwards.
+  // Null when the box isn't over such a layer.
+  function pdfTextItems(sel, sx, sy) {
+    const layer = [...document.querySelectorAll(".textLayer")].find((l) => {
+      const a = intersect(l.getBoundingClientRect(), sel);
+      return a && a.width * a.height > sel.width * sel.height * 0.5;
+    });
+    if (!layer) return null;
+    const items = [];
+    for (const span of layer.querySelectorAll("span")) {
+      if (span.children.length || !span.textContent.trim()) continue;
+      const r = span.getBoundingClientRect();
+      if (!r.width || !r.height || !centreIn(r, sel)) continue;
+      const cs = getComputedStyle(span);
+      const size = parseFloat(cs.fontSize) || r.height;
+      const fam = /mono/i.test(cs.fontFamily) ? "Courier New" : /serif/i.test(cs.fontFamily) && !/sans/i.test(cs.fontFamily) ? "Times New Roman" : "Arial";
+      const a = span.closest("a");
+      items.push({ str: span.textContent, x: r.left + sx, y: -(r.top + sy + size * 0.8), w: r.width, size, family: fam,
+                   bold: false, italic: false, mathFont: false, href: a ? a.href : null, color: null });
+    }
+    return items;
   }
 
   // Several crops one above the other on white, for the image flavour of a multi-box clip.
@@ -369,9 +400,6 @@
       }
       return false;
     };
-    // Light text needs the colour behind it (a dark section, a photo, a gradient): it is sampled from the
-    // screenshot afterwards and applied as a highlight, so white text stays readable on a white page.
-    const needsBackdrop = [];
     const visuals = [];
     const lines = [];
     let line = "";
@@ -380,7 +408,7 @@
     const base = getComputedStyle(document.body);
     // the box's own width, so lines wrap where they did on screen
     out.setAttribute("style", `width:${Math.round(Math.max(...sels.map((s) => s.width)))}px;max-width:100%;` +
-                              `font-family:${base.fontFamily};font-size:${base.fontSize};color:${base.color};line-height:${base.lineHeight}`);
+                              `font-family:${base.fontFamily};font-size:${base.fontSize};color:${readableColor(base.color)};line-height:${base.lineHeight}`);
 
     const walk = (node, into, parentCs) => {
       const kids = node.shadowRoot ? node.shadowRoot.childNodes
@@ -443,13 +471,6 @@
         if (/^(TABLE|UL|OL|DL)$/.test(tag)) cellDepth--;
         if (copy.childNodes.length || tag === "HR") {
           into.appendChild(copy);
-          const behind = effectiveBackground(child);
-          const ownText = [...child.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.data.trim());
-          if ((leaf || (block && (cellDepth || ownText))) && copy.textContent.trim() &&
-              (luminance(cs.color) > 0.6 || (behind && luminance(behind) < 0.93) || backdropPicture(child))) {
-            const r = child.getBoundingClientRect();
-            needsBackdrop.push({ node: copy, rect: r, src: child });
-          }
           if (leaf) blockDone(child, cs, copy, into, spacerAt, /^(TABLE|UL|OL|DL)$/.test(tag));
         }
         if (block) flush();
@@ -499,6 +520,7 @@
     // margin-left - OneNote ignores text-align:center and container margins - and vertical gaps become sized
     // empty paragraphs, collapsed like CSS margins (the larger of the two wins).
     let cellDepth = 0, pendingGap = 0, blocksSeen = 0;
+    const boxLeft = Math.min(...sels.map((s) => s.left));
     const placed = [];                             // {el: output element, left, right} - indents fixed up at the end
     const blockDone = (src, cs, el, into, at, whole) => {
       const gap = Math.max(pendingGap, parseFloat(cs.marginTop) || 0);
@@ -509,7 +531,7 @@
       }
       pendingGap = parseFloat(cs.marginBottom) || 0;
       const r = src.getBoundingClientRect();
-      let left = r.left + (whole ? 0 : parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth));
+      let left = Math.max(boxLeft, r.left + (whole ? 0 : parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth)));
       let right = 0;
       if (!whole && cs.textAlign === "center") {   // centre by indenting to the middle (OneNote drops text-align:center)
         const range = document.createRange();
@@ -557,14 +579,15 @@
       const margin = `margin:0 ${Math.round(p.right * 0.75)}pt 0 ${Math.round((p.left - minLeft) * 0.75)}pt`;   // the 4-value form OneNote reads
       p.el.setAttribute("style", [p.el.getAttribute("style"), margin].filter(Boolean).join(";"));
     }
-    return { root: out, visuals, backdrops: needsBackdrop, text: lines.join("\n") };
+    return { root: out, visuals, text: lines.join("\n") };
   }
 
   function styleDiff(cs, parentCs, block, tag) {
     const parts = [];
     for (const p of STYLE_PROPS) {
-      const v = cs.getPropertyValue(p);
-      if (v !== parentCs.getPropertyValue(p) && !(p === "vertical-align" && v === "baseline") &&
+      const v = p === "color" ? readableColor(cs.color) : cs.getPropertyValue(p);
+      const pv = p === "color" ? readableColor(parentCs.color) : parentCs.getPropertyValue(p);
+      if (v !== pv && !(p === "vertical-align" && v === "baseline") &&
           !(p === "white-space" && !/^pre/.test(v))) parts.push(`${p}:${v}`);
     }
     const bg = cs.backgroundColor;
@@ -583,35 +606,25 @@
   }
 
   // Relative luminance (0 black .. 1 white) of a CSS colour like rgb(r, g, b) or #rrggbb.
+  // Colours for a white page: light text from dark themes / text over pictures becomes its dark equivalent
+  // (grey and white -> black; coloured text such as links keeps its hue, darker).
+  function readableColor(css) {
+    const m = String(css).match(/\d+(\.\d+)?/g);
+    if (!m || luminance(css) <= 0.6) return css;
+    const [r, g, b] = m.slice(0, 3).map(Number);
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 40) return "rgb(0, 0, 0)";
+    const k = 0.3 / luminance(css);
+    return `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(b * k)})`;
+  }
   function luminance(css) {
     const m = String(css).match(/\d+(\.\d+)?/g);
     let [r, g, b] = css.startsWith("#") ? [1, 3, 5].map((k) => parseInt(css.slice(k, k + 2), 16)) : (m || [0, 0, 0]).map(Number);
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
   }
-  // The most common colour of a picture (the background behind a piece of text).
-  async function dominantColour(blob) {
-    const img = await createImageBitmap(blob);
-    const w = Math.min(img.width, 200), h = Math.max(1, Math.round(img.height * w / img.width));
-    const c = new OffscreenCanvas(w, h);
-    const g = c.getContext("2d");
-    g.drawImage(img, 0, 0, w, h);
-    const px = g.getImageData(0, 0, w, h).data;
-    const tally = new Map();
-    for (let i = 0; i < px.length; i += 4) {
-      const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
-      tally.set(k, (tally.get(k) || 0) + 1);
-    }
-    let best = null, n = 0;
-    for (const [k, v] of tally) if (v > n) { best = k; n = v; }
-    if (best === null) return null;
-    const ch = (v) => (((v & 15) << 4) | 8).toString(16).padStart(2, "0");
-    return `#${ch(best >> 8)}${ch(best >> 4)}${ch(best)}`;
-  }
-
   // Vertical space as an empty paragraph of the right size (OneNote drops paragraph margins).
   const spacerHtml = (px) => (px * 0.75 >= 3 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(px * 0.75 / 1.15))}pt">&nbsp;</p>` : "");
   // OneNote resets the font inside table cells, so cells state theirs in full.
-  const cellFont = (cs, explicit) => `font-family:${cs.fontFamily};font-size:${cs.fontSize};color:${cs.color}` +
+  const cellFont = (cs, explicit) => `font-family:${cs.fontFamily};font-size:${cs.fontSize};color:${readableColor(cs.color)}` +
     (parseInt(cs.fontWeight, 10) >= 600 ? ";font-weight:bold" : explicit ? ";font-weight:normal" : "") +
     (cs.fontStyle === "italic" ? ";font-style:italic" : "");
   const isBlock = (cs) => !/^inline/.test(cs.display) && cs.display !== "contents";
@@ -619,12 +632,6 @@
   function iconLike(node, cs, r) {                 // background-image pictures with no text of their own
     return cs.backgroundImage && cs.backgroundImage !== "none" && /url\(/.test(cs.backgroundImage) &&
            !node.textContent.trim() && r.width >= 8 && r.height >= 8;
-  }
-  function backdropPicture(node) {
-    for (let n = node; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
-      if (/url\(|gradient\(/.test(getComputedStyle(n).backgroundImage)) return true;
-    }
-    return false;
   }
   function effectiveBackground(node) {
     for (let n = node; n && n.nodeType === 1; n = n.parentElement) {
@@ -724,10 +731,13 @@
   // and short lines). Each run keeps its real font family, size, bold/italic (PDF.js font objects) and colour
   // (read from the rendered glyph pixels, since PDF.js text content has no colour). Paragraphs keep their
   // indentation, centring and spacing in points.
-  async function pdfRich(page, [x1, y1, x2, y2], raster) {
+  async function pdfRich(page, rect, raster) {
+    const [x1, y1, x2, y2] = rect;
     const content = await page.getTextContent();
+    const links = (await page.getAnnotations()).filter((a) => a.subtype === "Link" && (a.url || a.unsafeUrl))
+      .map((a) => ({ r: a.rect, url: a.url || a.unsafeUrl }));
     const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
-    let items = [];
+    const items = [];
     for (const it of content.items) {
       if (!it.str || !it.str.trim() || !it.transform) continue;   // PDF.js fills gaps with wide space items; spacing comes from positions
       const [a, b, c, d, x, y] = it.transform;
@@ -736,9 +746,22 @@
       const cx = x + w / 2, cy = y + size * 0.35;
       if (cx < x1 || cx > x2 || cy < y1 || cy > y2 || Math.abs(b) > Math.abs(a) * 0.1) continue;   // skip rotated text
       const font = fontInfo(page, it.fontName, content.styles[it.fontName]);
-      items.push({ str: it.str, x, y, w, size, ...font, color: glyphColor(ctx, raster, x, y - size * 0.2, x + w, y + size * 0.8) });
+      const link = links.find((l) => cx >= l.r[0] && cx <= l.r[2] && cy >= l.r[1] && cy <= l.r[3]);
+      items.push({ str: it.str, x, y, w, size, ...font, href: link ? link.url : null,
+                   color: glyphColor(ctx, raster, x, y - size * 0.2, x + w, y + size * 0.8) });
     }
+    return layoutItems(items, rect, raster, 1);
+  }
+
+  // The layout engine shared by the PDF reader and PDF viewers embedded in web pages (Overleaf...): text items
+  // (x, baseline y growing upwards, width, size, font, colour, link) -> formatted HTML in OneNote's subset.
+  // `ptPer` converts the items' units to points (1 for PDF points, 0.75 for CSS pixels).
+  async function layoutItems(items, [x1, y1, x2, y2], raster, ptPer) {
     if (!items.length) return { text: "", html: "" };
+    const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
+    for (const it of items) {                      // colour from the glyph pixels when the source didn't say
+      if (!it.color) it.color = readableColor(glyphColor(ctx, raster, it.x, it.y - it.size * 0.2, it.x + it.w, it.y + it.size * 0.8));
+    }
 
     // Ruled tables: the grid comes from the ruling lines drawn on the page (like PyMuPDF's find_tables), so text
     // wrapped inside a cell stays in its cell instead of becoming extra rows.
@@ -759,12 +782,12 @@
     }).filter((t) => t.rows.length);
     items = items.filter((it) => !it.inGrid);
 
-    // lines: same baseline (within a third of the size), left to right
-    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.min(p.size, q.size) * 0.35 ? q.y - p.y : p.x - q.x));
+    // lines: same baseline, left to right; raised/lowered small text (indices, exponents) stays on its line
+    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.max(p.size, q.size) * 0.45 ? q.y - p.y : p.x - q.x));
     const lines = [];
     for (const it of items) {
       const last = lines[lines.length - 1];
-      if (last && Math.abs(last.y - it.y) <= Math.min(last.first, it.size) * 0.35) {
+      if (last && Math.abs(last.y - it.y) <= Math.max(last.first, it.size) * 0.45 && it.x >= last.x - it.size) {
         last.items.push(it);
         last.end = Math.max(last.end, it.x + it.w);
       } else {
@@ -772,9 +795,12 @@
       }
     }
     for (const l of lines) {
+      l.items.sort((p, q) => p.x - q.x);
       l.runs = runsOf(l.items);
       l.text = l.runs.map((r) => r.s).join("");
-      l.size = mostCommon(l.runs.filter((r) => r.s.trim()).map((r) => [r.size, r.s.length])) || 10;   // a 12pt colon doesn't make a 12pt line
+      l.size = mostCommon(l.runs.filter((r) => r.s.trim() && !r.va).map((r) => [r.size, r.s.length])) || l.first;
+      l.y = mostCommon(l.items.filter((it) => Math.abs(it.size - l.size) < 0.6).map((it) => [it.y, it.str.length])) ?? l.y;
+      l.math = isMathLine(l);
       // segments: pieces of the line separated by a wide gap (table cells, tab stops)
       l.segs = [];
       for (const it of l.items) {
@@ -784,6 +810,16 @@
       }
     }
 
+    // A display equation is one picture: short lines next to an equation line ("otherwise", "(1)", a fraction's
+    // denominator) belong to it.
+    const colW = Math.max(1, Math.max(...lines.map((l) => l.end)) - Math.min(...lines.map((l) => l.x)));
+    for (let pass = 0; pass < 3; pass++) {
+      lines.forEach((l, k) => {
+        if (l.math || l.end - l.x > colW * 0.6) return;
+        const near = (o) => o && o.math && Math.abs(o.y - l.y) < Math.max(o.size, l.size) * 2.2;
+        if (near(lines[k - 1]) || near(lines[k + 1])) l.math = true;
+      });
+    }
     const left = Math.min(...lines.map((l) => l.x), ...gridTables.map((t) => t.anchors[0]));
     const right = Math.max(...lines.map((l) => l.end), ...gridTables.map((t) => t.right));
     const width = Math.max(1, right - left);
@@ -795,10 +831,15 @@
     // tables: two or more consecutive lines whose segments start at the same column positions
     const blocks = [];
     for (let i = 0; i < lines.length; i++) {
-      const t = tableAt(lines, i);
-      if (t) { blocks.push(t); i = t.last; continue; }
       const l = lines[i];
       const b = blocks[blocks.length - 1];
+      if (l.math) {                                  // equations: pasted as they are typeset (see mathImage)
+        if (b && b.kind === "math" && b.lines[b.lines.length - 1].y - l.y < Math.max(l.size, b.lines[0].size) * 2.2) b.lines.push(l);
+        else blocks.push({ kind: "math", lines: [l] });
+        continue;
+      }
+      const t = tableAt(lines, i);
+      if (t) { blocks.push(t); i = t.last; continue; }
       const prev = b && b.kind === "para" && b.lines[b.lines.length - 1];
       const joins = prev &&
         prev.y - l.y < Math.max(prev.size, l.size) * 1.45 &&            // normal line spacing
@@ -809,44 +850,54 @@
       if (joins) {
         const lastRun = b.runs[b.runs.length - 1];
         if (/[A-Za-z]-$/.test(lastRun.s) && /^[a-z]/.test(l.text)) lastRun.s = lastRun.s.slice(0, -1);   // re-join hyphenated words
-        else if (!/\s$/.test(lastRun.s)) b.runs.push({ ...lastRun, s: " " });
+        else if (!/\s$/.test(lastRun.s)) b.runs.push({ ...lastRun, s: " ", href: null, va: null });
         for (const r of l.runs) mergeRun(b.runs, r);
         b.lines.push(l);
       } else {
         blocks.push({ kind: "para", lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l) });
       }
     }
-    blocks.push(...gridTables);                                     // in reading order, top first (PDF y grows upwards)
-    const topOf = (b) => (b.kind === "para" ? b.lines[0].y + b.lines[0].size : b.top ?? b.rows[0].line.y + b.rows[0].line.size);
+    blocks.push(...gridTables);                                     // in reading order, top first (y grows upwards)
+    const topOf = (b) => (b.kind === "para" || b.kind === "math" ? b.lines[0].y + b.lines[0].size : b.top ?? b.rows[0].line.y + b.rows[0].line.size);
     blocks.sort((a, b) => topOf(b) - topOf(a));
     for (let i = 0; i + 1 < blocks.length; i++) {                     // space below each block, from the baselines
       const a = blocks[i], b = blocks[i + 1];
-      const lastA = a.kind === "para" ? a.lines[a.lines.length - 1] : a.bottomLine || a.rows[a.rows.length - 1].line;
-      const firstB = b.kind === "para" ? b.lines[0] : b.rows[0].line;
+      const lastA = a.lines ? a.lines[a.lines.length - 1] : a.bottomLine || a.rows[a.rows.length - 1].line;
+      const firstB = b.lines ? b.lines[0] : b.rows[0].line;
       a.after = Math.max(0, lastA.y - firstB.y - firstB.size * 1.25);
     }
     for (const b of blocks) if (b.kind === "table" && b.ruled === undefined) b.ruled = isRuled(ctx, raster, b);
+    for (const b of blocks) if (b.kind === "math") b.img = await mathImage(b, raster, ptPer);
 
     // HTML in the subset OneNote keeps (checked by pasting into OneNote): fonts, sizes, colours, bold/italic,
-    // margin-left indents and tables. It drops centring, margins and line spacing, so centred lines are indented
-    // to the middle (margin-right too, which centres them in Word) and gaps become sized empty paragraphs.
-    const all = blocks.flatMap((b) => (b.kind === "para" ? b.runs : b.rows.flatMap((r) => r.cells.flat())));
+    // links, sub/superscripts, margin-left indents and tables. It drops centring, margins and line spacing, so
+    // centred lines are indented to the middle (margin-right too, which centres them in Word) and gaps become
+    // sized empty paragraphs.
+    const pt = (v) => round1(v * ptPer);
+    const all = blocks.flatMap((b) => (b.kind === "para" ? b.runs : b.kind === "table" ? b.rows.flatMap((r) => r.cells.flat()) : []));
     const common = (key) => mostCommon(all.filter((r) => r.s.trim()).map((r) => [r[key], r.s.length]));
-    const base = { family: common("family"), size: common("size"), color: common("color") };
-    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const base = { family: common("family") || "Arial", size: common("size") || 11, color: common("color") || "#000000" };
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const span = (r, full) => {
       const s = [];
       if (full || r.family !== base.family) s.push(`font-family:${cssFamily(r.family)}`);
-      if (full || r.size !== base.size) s.push(`font-size:${r.size}pt`);
+      if (full || r.size !== base.size) s.push(`font-size:${Math.round(r.size * ptPer * 2) / 2}pt`);
       if (full || r.color !== base.color) s.push(`color:${r.color}`);
       if (r.bold) s.push("font-weight:bold");
       if (r.italic) s.push("font-style:italic");
-      return s.length ? `<span style="${s.join(";")}">${esc(r.s)}</span>` : esc(r.s);
+      let h = s.length ? `<span style="${s.join(";")}">${esc(r.s)}</span>` : esc(r.s);
+      if (r.va) h = `<${r.va}>${h}</${r.va}>`;              // exponents and indices
+      if (r.href) h = `<a href="${esc(r.href)}">${h}</a>`;  // links stay clickable
+      return h;
     };
-    const spacer = (gap) => (gap >= 2.5 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(gap / 1.15))}pt">&nbsp;</p>` : "");
+    const spacer = (gap) => (gap * ptPer >= 2.5 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(gap * ptPer / 1.15))}pt">&nbsp;</p>` : "");
     const html = blocks.map((b) => {
+      if (b.kind === "math") {
+        const indent = b.centred ? 0 : pt(b.left - left);
+        return (b.img ? `<p style="margin:0 0pt 0 ${indent}pt">${b.img}</p>` : "") + spacer(b.after);
+      }
       if (b.kind === "table") {
-        const colW = b.anchors.map((x, k) => ((b.anchors[k + 1] ?? b.right) - x) * 4 / 3);   // pt -> px
+        const colW = b.anchors.map((x, k) => ((b.anchors[k + 1] ?? b.right) - x) * ptPer * 4 / 3);   // pt -> px
         const rows = b.rows.map((r) => "<tr>" + r.cells.map((cell, k) =>
           `<td width="${Math.round(colW[k])}" style="width:${Math.round(colW[k])}px;vertical-align:top;padding:1pt 4pt">` +
           `${cell.map((x) => span(x, true)).join("") || "&nbsp;"}</td>`).join("") + "</tr>").join("");
@@ -854,19 +905,51 @@
       }
       const lineW = Math.max(...b.lines.map((l) => l.end - l.x));
       const pad = b.centred ? Math.max(0, (x2 - x1 - lineW) / 2 - (left - x1)) : b.indent;
-      const style = [`margin:0 ${b.centred ? round1(pad) : 0}pt 0 ${round1(pad)}pt`];
+      const style = [`margin:0 ${b.centred ? pt(pad) : 0}pt 0 ${pt(pad)}pt`];
       if (b.centred) style.push("text-align:center");
       return `<p style="${style.join(";")}">${b.runs.map((r) => span(r)).join("")}</p>` + spacer(b.after);
     }).join("");
     const text = blocks.map((b) => (b.kind === "table"
       ? b.rows.map((r) => r.cells.map((c) => c.map((x) => x.s).join("")).join("\t")).join("\n")
+      : b.kind === "math" ? b.lines.map((l) => l.text).join("\n")
       : (b.centred ? "" : " ".repeat(Math.round(b.indent / (base.size || 11) * 2))) + b.runs.map((r) => r.s).join(""))).join("\n");
     return {
       text,
       // the original column width (Word), so lines wrap at the same words as in the PDF
-      html: `<div style="width:${Math.ceil(width + 2)}pt;max-width:100%;font-family:${cssFamily(base.family)};font-size:${base.size}pt;` +
-            `color:${base.color};line-height:1.15">${html}</div>`,
+      html: `<div style="width:${Math.ceil(width * ptPer + 2)}pt;max-width:100%;font-family:${cssFamily(base.family)};` +
+            `font-size:${Math.round(base.size * ptPer * 2) / 2}pt;color:${base.color};line-height:1.15">${html}</div>`,
     };
+  }
+
+  // Equations: math fonts (TeX's CMMI/CMSY/CMEX, Cambria Math, Symbol...) or mostly mathematical symbols. Their
+  // text would read like "s = Σ x i 2"; pasted as the typeset picture they look exactly like the paper.
+  const MATH_CHARS = /[Ͱ-Ͽ←-⇿∀-⋿⌀-⏿⟀-⟯⦀-⧿⨀-⫿\u{1d400}-\u{1d7ff}∑∏∫√∞±×÷≤≥≠≈∂∇=+^_|]/u;
+  function isMathLine(l) {
+    const chars = l.items.reduce((n, it) => n + it.str.replace(/\s/g, "").length, 0) || 1;
+    const fromMathFonts = l.items.filter((it) => it.mathFont).reduce((n, it) => n + it.str.replace(/\s/g, "").length, 0) / chars;
+    const symbols = [...l.text.replace(/\s/g, "")].filter((ch) => MATH_CHARS.test(ch)).length / chars;
+    const words = (l.text.match(/[A-Za-z]{3,}/g) || []).length;
+    const scattered = l.items.length >= 4 && chars / l.items.length < 2.2;
+    const operators = /[=+−<>≤≥∑∫√∂]/.test(l.text);   // = + − < > ≤ ≥ ∑ ∫ √ ∂
+    return (fromMathFonts > 0.35 && words < 6) || symbols > 0.3 || (scattered && symbols > 0.12 && words < 4) ||
+           (scattered && operators && words < 8 && chars / l.items.length < 3);   // text layers: no font names, many tiny pieces
+  }
+
+  async function mathImage(b, { canvas, box1, scale, v1 }, ptPer) {
+    const its = b.lines.flatMap((l) => l.items);
+    const xa = Math.min(...its.map((it) => it.x)) - 2, xb = Math.max(...its.map((it) => it.x + it.w)) + 2;
+    const ya = Math.min(...its.map((it) => it.y - it.size * 0.45)) - 2, yb = Math.max(...its.map((it) => it.y + it.size * 1.05)) + 2;
+    b.left = xa;
+    const [ax, ay] = v1.convertToViewportPoint(xa, yb), [bx, by] = v1.convertToViewportPoint(xb, ya);
+    const sx = Math.max(0, Math.floor((Math.min(ax, bx) - box1.x) * scale)), sy = Math.max(0, Math.floor((Math.min(ay, by) - box1.y) * scale));
+    const sw = Math.min(canvas.width - sx, Math.ceil(Math.abs(bx - ax) * scale)), sh = Math.min(canvas.height - sy, Math.ceil(Math.abs(by - ay) * scale));
+    if (sw < 2 || sh < 2) return "";
+    const c = new OffscreenCanvas(sw, sh);
+    c.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    const uri = await blobToDataUri(await c.convertToBlob({ type: "image/png" }));
+    const w = Math.round((xb - xa) * ptPer * 4 / 3), h = Math.round((yb - ya) * ptPer * 4 / 3);
+    const alt = b.lines.map((l) => l.text).join(" ").replace(/"/g, "&quot;");
+    return `<img src="${uri}" width="${w}" height="${h}" alt="${alt}">`;
   }
 
   // Runs of one table cell: its lines top to bottom, joined with spaces (the text reflows in the pasted cell).
@@ -950,13 +1033,18 @@
   }
 
   function runsOf(items) {
+    // the line's main size and baseline: smaller text clearly above / below it is an exponent / index
+    const main = mostCommon(items.map((it) => [Math.round(it.size * 2) / 2, it.str.length])) || 10;
+    const baseY = mostCommon(items.filter((it) => Math.abs(it.size - main) < 0.6).map((it) => [it.y, it.str.length])) ?? items[0].y;
     const runs = [];
     let end = null;
     for (const it of items) {
+      const small = it.size < main * 0.88;
+      const va = small && it.y > baseY + main * 0.15 ? "sup" : small && it.y < baseY - main * 0.08 ? "sub" : null;
       if (end !== null && it.x - end > it.size * 0.15 && runs.length && !/\s$/.test(runs[runs.length - 1].s) && !/^\s/.test(it.str)) {
-        mergeRun(runs, { s: " ", ...styleOf(it) });
+        mergeRun(runs, { s: " ", ...styleOf(it), va: null, href: null });
       }
-      mergeRun(runs, { s: it.str, ...styleOf(it) });
+      mergeRun(runs, { s: it.str, ...styleOf(it), size: va ? main : Math.round(it.size * 2) / 2, va });
       end = it.x + it.w;
     }
     return runs;
@@ -1017,8 +1105,10 @@
   }
 
   const round1 = (v) => Math.round(v * 10) / 10;
-  const styleOf = (it) => ({ family: it.family, size: Math.round(it.size * 2) / 2, color: it.color, bold: it.bold, italic: it.italic });
-  const sameStyle = (a, b) => a.family === b.family && a.size === b.size && a.color === b.color && a.bold === b.bold && a.italic === b.italic;
+  const styleOf = (it) => ({ family: it.family, size: Math.round(it.size * 2) / 2, color: it.color, bold: it.bold,
+                              italic: it.italic, href: it.href || null, va: null });
+  const sameStyle = (a, b) => a.family === b.family && a.size === b.size && a.color === b.color && a.bold === b.bold &&
+                              a.italic === b.italic && (a.href || null) === (b.href || null) && (a.va || null) === (b.va || null);
   function mergeRun(runs, r) {
     const last = runs[runs.length - 1];
     if (last && (sameStyle(last, r) || !r.s.trim())) last.s += r.s; else runs.push({ ...r });
@@ -1040,6 +1130,8 @@
     try { f = page.commonObjs.has(id) ? page.commonObjs.get(id) : null; } catch (e) { /* not loaded */ }
     const ps = ((f && f.name) || "").replace(/^[A-Z]{6}\+/, "");
     let fam = ps.split(/[-,]/)[0].replace(/(PSMT|PS|MT)$/, "");
+    const mathFont = /^(CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|STIX|LMMath|Latin ?Modern ?Math|Cambria ?Math|Symbol|MTExtra|Euclid|TeXGyre\w*Math|XITSMath)/i.test(fam) ||
+                     /Math/i.test(fam);
     if (/^(CM|LM|SF)[A-Z]*\d*$/i.test(fam)) fam = /^(CMMI|CMSY|CMEX)/i.test(fam) ? "Cambria Math" : "Times New Roman";   // TeX fonts
     fam = FAMILY_NAMES[fam] || fam.replace(/([a-z])([A-Z])/g, "$1 $2");
     if (!fam) fam = style && /serif/.test(style.fontFamily) && !/sans/.test(style.fontFamily) ? "Times New Roman" : "Arial";
@@ -1048,6 +1140,7 @@
       family: fam,
       bold: !!(f && (f.bold || f.black)) || /bold|black|heavy|semibold|demi/i.test(suffix),
       italic: !!(f && f.italic) || /italic|oblique/i.test(suffix),
+      mathFont,
     };
   }
 

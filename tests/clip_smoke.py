@@ -30,6 +30,8 @@ td{border:1px solid #888;padding:4px} table{border-collapse:collapse}</style></h
 <svg id=svg width=200 height=100><rect width=200 height=100 fill="#36c"/><circle cx=100 cy=50 r=30 fill="#fc0"/></svg>
 <p>Middle paragraph not wanted.</p>
 <table id=t><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>
+<div id=dark style="background:#16181d;color:#e8e8e8;padding:16px;margin-top:20px;width:600px">
+<p style="margin:0 0 0 0">Dark theme answer with a <a href="https://example.org/x" style="color:#8ab4f8">blue link</a>.</p></div>
 </body></html>"""
 READ_CLIPBOARD = """async () => { const out = {};
   for (const it of await navigator.clipboard.read()) for (const t of it.types) {
@@ -127,6 +129,12 @@ def main():
             table = ((t["x"] - 4, t["y"] - 4), (t["x"] + t["width"] + 4, t["y"] + t["height"] + 4))
             results["web multi"] = clip(page, base + "/*", *table, more=[heading])
             results["web multi image"] = clip(page, base + "/*", *table, key="i", more=[heading])
+            dk = page.locator("#dark").bounding_box()
+            results["web dark"] = clip(page, base + "/*", (dk["x"] + 4, dk["y"] + 4), (dk["x"] + dk["width"] - 4, dk["y"] + dk["height"] - 4), key="t")
+            sw.evaluate(f"async () => {{ const [t] = await chrome.tabs.query({{ url: '{base}/*' }}); await startClip(t); }}")
+            page.wait_for_selector("alto-clip", state="attached", timeout=5000)
+            top_layer = page.evaluate("() => document.querySelector('alto-clip').matches(':popover-open')")
+            page.keyboard.press("Escape")
 
             pdf = ctx.new_page()
             pdf.goto(base + "/slides.pdf")
@@ -159,7 +167,7 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
 
     wd, wi, wt, tb, pt, pi = (results[k] for k in ("web default", "web image", "web text", "web table", "pdf text", "pdf image"))
-    wm, wmi, pm = results["web multi"], results["web multi image"], results["pdf multi"]
+    wm, wmi, pm, dk = results["web multi"], results["web multi image"], results["pdf multi"], results["web dark"]
     checks = {
         "shortcuts Alt+L / Alt+Shift+L": shortcuts.get("clip-region") == "Alt+L" and shortcuts.get("save-page") == "Alt+Shift+L",
         "default is editable text": "text/html" in wd and "Key exchange" in wd.get("text/plain", ""),
@@ -171,6 +179,10 @@ def main():
         "headings state their look (no h1-h6 for OneNote)": "<h2" not in wt.get("text/html", "x") and "font-size:24px" in wt.get("text/html", ""),
         "tables carry the border attribute (OneNote)": '<table border="1"' in tb.get("text/html", ""),
         "gaps become spacer paragraphs (OneNote)": "&nbsp;</p>" in wt.get("text/html", ""),
+        "overlay sits in the top layer (pages can't grab the drag)": top_layer,
+        "dark theme: light text pasted dark, no highlight boxes": "rgb(232, 232, 232)" not in dk.get("text/html", "x")
+            and "background-color" not in dk.get("text/html", "x") and "Dark theme answer" in dk.get("text/plain", ""),
+        "links stay links": 'href="https://example.org/x"' in dk.get("text/html", ""),
         "text mode cuts at the box edge": "Outside words" not in wt.get("text/plain", "x"),
         "visuals become exact images": "<img" in wt.get("text/html", "") and "data:image/png;base64," in wt.get("text/html", ""),
         "click picks the whole table": tb.get("text/plain", "").replace("\r", "") == "a\tb\n1\t2",
