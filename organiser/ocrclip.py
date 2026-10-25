@@ -47,20 +47,52 @@ async def _recognize(png_bytes):
     return lines
 
 
+def prepare(image):
+    """The image the OCR engine reads best: dark text on white (dark themes inverted), enlarged and sharpened.
+    Returns (image, scale)."""
+    from PIL import ImageFilter, ImageOps
+    gray = ImageOps.grayscale(image)
+    if np.asarray(gray).mean() < 120:              # light text on a dark theme
+        gray = ImageOps.invert(gray)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    scale = max(1, min(3, 5000 // max(gray.width, gray.height, 1)))
+    if scale > 1:
+        gray = gray.resize((gray.width * scale, gray.height * scale), Image.LANCZOS)
+    return gray.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=2)), scale
+
+
 def ocr_words(image):
-    """[[word, ...] per OCR line] in the image's pixel coordinates. Small text is upscaled first for accuracy."""
-    scale = 2 if image.height < 1600 else 1
-    img = image.convert("RGB")
-    if scale != 1:
-        img = img.resize((img.width * scale, img.height * scale), Image.LANCZOS)
+    """[[word, ...] per text row] in the image's pixel coordinates."""
+    img, scale = prepare(image)
     buf = io.BytesIO()
-    img.save(buf, "PNG")
+    img.convert("RGB").save(buf, "PNG")
     lines = asyncio.run(_recognize(buf.getvalue()))
     for ln in lines:
         for w in ln:
             for k in ("x", "y", "w", "h"):
                 w[k] /= scale
-    return lines
+    return merge_rows(lines)
+
+
+def merge_rows(lines):
+    """The engine sometimes cuts one row of text into pieces; pieces on the same row, close enough to be one line
+    (not separate columns), are joined left to right."""
+    out = []
+    for ln in sorted(lines, key=lambda l: (min(w["y"] for w in l), min(w["x"] for w in l))):
+        y0, y1 = min(w["y"] for w in ln), max(w["y"] + w["h"] for w in ln)
+        h = y1 - y0
+        x0 = min(w["x"] for w in ln)
+        for o in out:
+            oy0, oy1 = min(w["y"] for w in o), max(w["y"] + w["h"] for w in o)
+            overlap = min(y1, oy1) - max(y0, oy0)
+            ox1 = max(w["x"] + w["w"] for w in o)
+            if overlap > 0.6 * min(h, oy1 - oy0) and 0 <= x0 - ox1 < 6 * h:
+                o.extend(ln)
+                o.sort(key=lambda w: w["x"])
+                break
+        else:
+            out.append(list(ln))
+    return out
 
 
 # ---------------------------------------------------------------- tables from ruling lines
@@ -152,6 +184,9 @@ def screen_rich(image, dpi_scale=1.0):
     """Formatted HTML (OneNote's subset) + plain text for a screenshot box."""
     rgb = np.asarray(image.convert("RGB"))
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    if gray.mean() < 120:                          # dark theme: find ruling lines on the dark-on-light version
+        gray = 255 - gray
+        rgb = 255 - rgb                            # (colours are read from the original image below)
     found, mask = grids(gray, with_mask=True)
     clean = rgb.copy()                             # ruling lines erased: letters touching them (g, p, y) read better
     if found:
@@ -162,6 +197,7 @@ def screen_rich(image, dpi_scale=1.0):
             inside[int(rows[0]) - 3:int(rows[-1]) + 4, int(cols[0]) - 3:int(cols[-1]) + 4] = True
         clean[lines_mask & inside] = bg
     ocr = ocr_words(Image.fromarray(clean))
+    rgb = np.asarray(image.convert("RGB"))         # original colours for the glyph colour
     if not ocr:
         return "", ""
     px_to_pt = 0.75 / dpi_scale                    # physical px -> pt
