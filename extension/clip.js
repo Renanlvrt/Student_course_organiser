@@ -253,7 +253,8 @@
     const embeddedPdf = pdfLayers.length && pdfLayers.every((items) => items && items.length);
     const plan = mode === "text" && !embeddedPdf ? extract(boxes.map((b) => client(b.page))) : null;
     const toPage = (r) => DOMRect.fromRect({ x: r.left + sx, y: r.top + sy, width: r.width, height: r.height });
-    if (plan) for (const v of plan.visuals) v.page = toPage(v.rect);
+    if (plan) for (const v of [...plan.visuals, ...plan.pdfRegions]) v.page = toPage(v.rect);
+    if (plan) for (const g of plan.pdfRegions) g.items = pdfTextItems(g.rect, sx, sy, g.layer) || [];
 
     const shots = [];
     const inView = (p, ox, oy) => p.top - oy >= 0 && p.bottom - oy <= innerHeight && p.left - ox >= 0 && p.right - ox <= innerWidth;
@@ -293,8 +294,19 @@
         summary = "Copied text from the PDF · Ctrl+V";
       } else if (plan) {
         for (const v of plan.visuals) v.node.src = await blobToDataUri(v.blob);
-        html = plan.root.outerHTML;
         text = plan.text;
+        for (const [k, g] of plan.pdfRegions.entries()) {   // PDF pages inside the box: the PDF layout engine
+          const s = await shotFor(g.page);
+          const bmp = await createImageBitmap(await crop(g.page));
+          const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+          canvas.getContext("2d", { willReadFrequently: true }).drawImage(bmp, 0, 0);
+          const v1 = { convertToViewportPoint: (x, y) => [x, -y], convertToPdfPoint: (x, y) => [x, -y] };
+          const raster = { canvas, box1: { x: g.page.left, y: g.page.top }, scale: s.ratio, v1 };
+          const part = await layoutItems(g.items, [g.page.left, -g.page.bottom, g.page.right, -g.page.top], raster, 0.75);
+          g.node.innerHTML = part.html;
+          text = text.replace(`\u0000pdf${k}`, part.text);
+        }
+        html = plan.root.outerHTML;
         const pics = plan.visuals.length ? " + " + plural(plan.visuals.length, "picture") : "";
         summary = text.trim() ? `Copied text${pics}${boxes.length > 1 ? ` from ${boxes.length} boxes` : ""} · Ctrl+V`
                               : "Copied picture · Ctrl+V";
@@ -311,10 +323,10 @@
 
   // Text items of a PDF.js text layer inside `sel` (client coords), in page CSS pixels with y growing upwards.
   // Null when the box isn't over such a layer.
-  function pdfTextItems(sel, sx, sy) {
-    const layer = [...document.querySelectorAll(".textLayer")].find((l) => {
+  function pdfTextItems(sel, sx, sy, given) {
+    const layer = given || [...document.querySelectorAll(".textLayer")].find((l) => {
       const a = intersect(l.getBoundingClientRect(), sel);
-      return a && a.width * a.height > sel.width * sel.height * 0.5;
+      return a && a.width * a.height > sel.width * sel.height * 0.85;   // mixed boxes go through extract()
     });
     if (!layer) return null;
     const items = [];
@@ -372,6 +384,7 @@
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK", "TITLE", "ALTO-CLIP"]);
   const VISUAL = new Set(["IMG", "SVG", "CANVAS", "VIDEO", "PICTURE", "IFRAME", "OBJECT", "EMBED", "MATH", "INPUT",
     "SELECT", "TEXTAREA", "METER", "PROGRESS", "AUDIO"]);
+  const CODE_EDITORS = ".cm-editor, .CodeMirror, .monaco-editor, .ace_editor";
   const VISUAL_SEL = ".katex, .katex-display, mjx-container, .MathJax, .MathJax_Display, .MathJax_SVG, .mwe-math-element, [role=img], [role=math]";
   const STYLE_PROPS = ["color", "font-family", "font-size", "font-weight", "font-style", "text-decoration-line",
     "vertical-align", "white-space", "line-height", "letter-spacing"];
@@ -401,6 +414,7 @@
       return false;
     };
     const visuals = [];
+    const pdfRegions = [];                         // PDF.js pages: laid out later with the PDF engine
     const lines = [];
     let line = "";
     const flush = () => { if (line.trim()) lines.push(line.replace(/ +/g, " ").trim()); line = ""; };
@@ -422,6 +436,16 @@
           const r = child.getBoundingClientRect();
           const tag = child.tagName.toUpperCase();
           if (!hit(r)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
+          if (child.matches(CODE_EDITORS) && codeBlock(child, into)) continue;
+          const pdfLayer = child.querySelector(":scope > .textLayer");
+          if (pdfLayer && child.querySelector("canvas") && clipArea(r)) {   // a PDF.js page (Overleaf's preview...)
+            flush();
+            const slot = document.createElement("div");
+            into.appendChild(slot);
+            pdfRegions.push({ node: slot, layer: pdfLayer, rect: clipArea(r) });
+            lines.push(`\u0000pdf${pdfRegions.length - 1}`);
+            continue;
+          }
           if (sideBySide(child, cs, r)) { rowTable(child, into, cs); continue; }
           if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r)) {
             const area = clipArea(r);
@@ -478,6 +502,36 @@
       }
     };
 
+    // Code editors (Overleaf's CodeMirror, Monaco, Ace): the code lines in order, in a monospace font, with their
+    // indentation and syntax colours - not the line numbers or the editor's chrome.
+    const codeBlock = (ed, into) => {
+      const rows = [...ed.querySelectorAll(".cm-line, .CodeMirror-line, .view-line, .ace_line")]
+        .map((el) => ({ el, r: el.getBoundingClientRect() }))
+        .filter(({ r }) => r.height && sels.some((s) => r.bottom > s.top + 2 && r.top < s.bottom - 2 && r.right > s.left && r.left < s.right))
+        .sort((a, b) => a.r.top - b.r.top);
+      if (!rows.length) return false;
+      flush();
+      const block = document.createElement("div");
+      const size = getComputedStyle(rows[0].el).fontSize;
+      for (const { el } of rows) {
+        const para = document.createElement("p");
+        para.setAttribute("style", `margin:0;font-family:Consolas,'Courier New',monospace;font-size:${size}`);
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (!n.data) continue;
+          const span = document.createElement("span");
+          span.style.color = readableColor(getComputedStyle(n.parentElement).color);
+          span.textContent = n.data.replace(/^ +| {2,}/g, (m) => "\u00a0".repeat(m.length)).replace(/\t/g, "\u00a0\u00a0\u00a0\u00a0");
+          para.appendChild(span);
+        }
+        if (!para.textContent.trim()) para.innerHTML = "&nbsp;";
+        block.appendChild(para);
+        line = el.textContent;
+        flush();
+      }
+      into.appendChild(block);
+      return true;
+    };
     // Side-by-side boxes (flex/grid rows) -> a borderless table, one row per visual row, so they stay editable.
     const rowTable = (node, into, cs) => {
       const rows = [];
@@ -579,7 +633,7 @@
       const margin = `margin:0 ${Math.round(p.right * 0.75)}pt 0 ${Math.round((p.left - minLeft) * 0.75)}pt`;   // the 4-value form OneNote reads
       p.el.setAttribute("style", [p.el.getAttribute("style"), margin].filter(Boolean).join(";"));
     }
-    return { root: out, visuals, text: lines.join("\n") };
+    return { root: out, visuals, pdfRegions, text: lines.join("\n") };
   }
 
   function styleDiff(cs, parentCs, block, tag) {
@@ -756,7 +810,47 @@
   // The layout engine shared by the PDF reader and PDF viewers embedded in web pages (Overleaf...): text items
   // (x, baseline y growing upwards, width, size, font, colour, link) -> formatted HTML in OneNote's subset.
   // `ptPer` converts the items' units to points (1 for PDF points, 0.75 for CSS pixels).
-  async function layoutItems(items, [x1, y1, x2, y2], raster, ptPer) {
+  async function layoutItems(items, rect, raster, ptPer) {
+    // Several text columns (two-column papers): each column is laid out on its own, left to right, so lines from
+    // different columns are never mixed.
+    const cols = splitColumns(items);
+    if (cols.length > 1) {
+      const parts = [];
+      for (const c of cols) parts.push(await layoutColumn(c.items, [c.x0, rect[1], c.x1, rect[3]], raster, ptPer));
+      return { html: parts.map((x) => x.html).join(""), text: parts.map((x) => x.text).filter(Boolean).join("\n") };
+    }
+    return layoutColumn(items, rect, raster, ptPer);
+  }
+
+  // Columns from a vertical gutter: a band with no text that runs down most of the box, with prose (long lines) on
+  // both sides - so a table's column gaps don't count.
+  function splitColumns(items, depth = 0) {
+    if (items.length < 12 || depth > 2) return [{ items, x0: Math.min(...items.map((i) => i.x)), x1: Math.max(...items.map((i) => i.x + i.w)) }];
+    const x0 = Math.min(...items.map((i) => i.x)), x1 = Math.max(...items.map((i) => i.x + i.w));
+    const W = Math.ceil(x1 - x0) + 1;
+    const cover = new Uint8Array(W);
+    for (const it of items) for (let x = Math.floor(it.x - x0); x < Math.ceil(it.x + it.w - x0) && x < W; x++) cover[Math.max(0, x)] = 1;
+    const size = mostCommon(items.map((i) => [Math.round(i.size), 1])) || 10;
+    let best = null;
+    for (let x = Math.floor(W * 0.2), run = 0; x < W * 0.8; x++) {
+      run = cover[x] ? 0 : run + 1;
+      if (run >= size * 0.9 && (!best || run > best.w)) best = { at: x - run + 1, w: run };
+    }
+    const whole = [{ items, x0, x1 }];
+    if (!best) return whole;
+    const cut = x0 + best.at + best.w / 2;
+    const left = items.filter((i) => i.x + i.w / 2 < cut), right = items.filter((i) => i.x + i.w / 2 >= cut);
+    const prose = (side) => {
+      const rows = new Map();
+      for (const i of side) { const k = Math.round(i.y / (i.size * 0.6)); rows.set(k, (rows.get(k) || 0) + i.str.length); }
+      const lens = [...rows.values()];
+      return lens.length >= 3 && lens.reduce((a, b) => a + b, 0) / lens.length >= 18;
+    };
+    if (!prose(left) || !prose(right)) return whole;
+    return [...splitColumns(left, depth + 1), ...splitColumns(right, depth + 1)];
+  }
+
+  async function layoutColumn(items, [x1, y1, x2, y2], raster, ptPer) {
     if (!items.length) return { text: "", html: "" };
     const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
     for (const it of items) {                      // colour from the glyph pixels when the source didn't say
