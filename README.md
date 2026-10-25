@@ -40,11 +40,29 @@ On any web page, press **Alt+Shift+L**. The extension scrolls through lazy-loade
 (including parts below the fold and embedded frames) as **one `.html` file** with its images, styles and fonts inside.
 A Save As dialog lets you pick the folder and name. The file opens offline in any browser, and its text stays
 selectable and searchable. The icon shows `…` while saving, `✓` when done and `!` (hover for the reason) if the
-page can't be saved (Chrome's own pages and the Web Store are off-limits to extensions; PDFs are a later phase).
+page can't be saved (Chrome's own pages and the Web Store are off-limits to extensions).
 Pages that only render the rows you can see (e.g. long SharePoint lists) are saved as currently shown.
 If the shortcut doesn't work, set it at `chrome://extensions/shortcuts`.
 Saving uses the SingleFile library (AGPL-3.0, `extension/vendor/singlefile/`).
 Test: `python -m tests.capture_smoke` (headless Chromium via Playwright, local test pages only).
+
+## Copy a region (Alt+L)
+Press **Alt+L** on any web page or PDF, then **drag a box** (or **click** a block on a web page, or a whole page in
+a PDF). It is copied at once; paste it anywhere with **Ctrl+V** (OneNote, Word, chat…). Esc or right-click cancels.
+- **Exact image** (default, key **I**): the box exactly as it looks on screen, at the same size as Win+Shift+S.
+- **Editable text** (key **T**): the real text with its formatting (headings, bold, colours, lists, tables) so you can
+  highlight and edit it; pictures, diagrams and formulas inside the box come along as exact screen crops.
+  It also puts plain text on the clipboard for apps that only take text.
+The last mode is remembered (separately for web pages and PDFs).
+
+**PDFs** open in a built-in reader (PDF.js, the reader Firefox uses) instead of Chrome's, because Chrome's viewer
+can't be read by extensions. There, Alt+L redraws the box straight from the PDF, takes the text from the PDF itself,
+and the **Save…** button in the confirmation saves a **cropped vector PDF** of just the box (sharp at any zoom, with
+selectable text). Blackboard downloads (sent as attachments) still download and get sorted as before. PDFs from your
+own computer open in the reader once **Allow access to file URLs** is on for the extension in `chrome://extensions`.
+To keep Chrome's own viewer, right-click the extension icon and untick **Open PDFs in the built-in reader**.
+Libraries: PDF.js (Apache-2.0, `extension/vendor/pdfjs/`), pdf-lib (MIT, `extension/vendor/pdf-lib/`).
+Test: `python -m tests.clip_smoke`.
 
 ## Always on
 - The organiser starts at every Windows login (Startup shortcut, `scripts\install_startup.ps1`) and lives in the tray.

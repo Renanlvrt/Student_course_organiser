@@ -28,6 +28,7 @@ const captureUrls = new Set();
 
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "save-page" && tab) savePage(tab);
+  if (command === "clip-region" && tab) startClip(tab);
 });
 
 // SingleFile runs the timers of its lazy-content scroll here, where they are not throttled.
@@ -156,3 +157,94 @@ async function runSingleFile(options) {
     return { error: String(e && e.message || e) };
   }
 }
+
+// ---- Alt+L: clip a region (clip.js) -------------------------------------------------------
+const READER = chrome.runtime.getURL("vendor/pdfjs/web/viewer.html");
+const readerUrl = (src, clip) => `${READER}?src=${encodeURIComponent(src)}${clip ? "&clip=1" : ""}`;
+
+async function startClip(tab) {
+  const tabId = tab.id;
+  if ((tab.url || "").startsWith(READER)) {        // our reader: it starts the overlay itself
+    chrome.runtime.sendMessage({ type: "clip-start", tabId }).catch(() => {});
+    return;
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["clip.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, func: () => globalThis.altoClip.start() });
+  } catch (e) {
+    if (await isPdf(tab.url || "")) {
+      await chrome.tabs.update(tabId, { url: readerUrl(tab.url, true) });   // reopen in the reader, then clip
+      return;
+    }
+    await badge(tabId, "!", "Alt+L can't run on this page: " + String(e && e.message || e));
+    setTimeout(() => badge(tabId, ""), 6000);
+  }
+}
+
+// A tab that can't be scripted may be Chrome's own PDF viewer (reader turned off, or opened before).
+async function isPdf(url) {
+  if (/^file:.*\.pdf$/i.test(url)) return true;
+  if (!/^https?:/.test(url)) return false;
+  try {
+    const res = await fetch(url, { method: "HEAD", credentials: "include" });
+    return /application\/pdf/i.test(res.headers.get("content-type") || "") || /\.pdf([?#]|$)/i.test(url);
+  } catch (e) { return /\.pdf([?#]|$)/i.test(url); }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg.type === "clip-shot" && sender.tab) {
+    chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
+      .then((dataUrl) => reply({ dataUrl }), (e) => reply({ error: String(e && e.message || e) }));
+    return true;
+  }
+  if (msg.type === "clip-save") {
+    (async () => {
+      captureUrls.add(msg.url);
+      try {
+        const id = await chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: true, conflictAction: "uniquify" });
+        reply({ state: await downloadFinished(id) });
+      } catch (e) {
+        reply({ error: String(e && e.message || e) });
+      } finally {
+        captureUrls.delete(msg.url);
+      }
+    })();
+    return true;
+  }
+  return false;
+});
+
+// ---- PDFs open in the built-in reader (so Alt+L can clip them exactly) -----------------------
+// declarativeNetRequest redirects before Chrome's own viewer loads, as Mozilla's PDF.js extension does
+// (mozilla/pdf.js extensions/chromium/pdfHandler.js). Unlike it, attachments are left alone: those are
+// Blackboard downloads the organiser sorts. On by default; toggled from the icon's right-click menu.
+const READER_KEY = "pdfReader";
+const readerOn = async () => (await chrome.storage.local.get(READER_KEY))[READER_KEY] !== false;
+const RULE_IDS = [1, 2, 3];
+
+async function applyReaderRules() {
+  const redirect = { type: "redirect", redirect: { regexSubstitution: READER + "?DNR:\\0" } };
+  const addRules = (await readerOn()) ? [
+    { id: 1, priority: 3, action: { type: "allow" },
+      condition: { urlFilter: "*", resourceTypes: ["main_frame"],
+                   responseHeaders: [{ header: "content-disposition", values: ["attachment*"] }] } },
+    { id: 2, priority: 2, action: redirect,
+      condition: { regexFilter: "^.*$", resourceTypes: ["main_frame"], excludedRequestMethods: ["post"],
+                   responseHeaders: [{ header: "content-type", values: ["application/pdf", "application/pdf;*"] }] } },
+    { id: 3, priority: 1, action: redirect,       // local files (needs "Allow access to file URLs")
+      condition: { regexFilter: "^file://.*\\.pdf$", resourceTypes: ["main_frame"] } },
+  ] : [];
+  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: RULE_IDS, addRules });
+}
+
+chrome.runtime.onInstalled.addListener(async () => {
+  chrome.contextMenus.create({ id: READER_KEY, title: "Open PDFs in the built-in reader (for Alt+L)",
+                               type: "checkbox", checked: await readerOn(), contexts: ["action"] });
+  applyReaderRules();
+});
+chrome.runtime.onStartup.addListener(applyReaderRules);
+chrome.contextMenus.onClicked.addListener(async (info) => {
+  if (info.menuItemId !== READER_KEY) return;
+  await chrome.storage.local.set({ [READER_KEY]: info.checked });
+  applyReaderRules();
+});

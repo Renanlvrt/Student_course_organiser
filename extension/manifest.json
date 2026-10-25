@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Alt+O Blackboard Helper",
-  "version": "1.3.0",
-  "description": "Tags Blackboard downloads with course + section for the Alt+O organiser, downloads new files in a section, and saves whole pages (Alt+Shift+L).",
+  "version": "1.4.0",
+  "description": "Tags Blackboard downloads for the Alt+O organiser, saves whole pages (Alt+Shift+L) and copies any region as text or an exact image (Alt+L), with a built-in PDF reader.",
   "permissions": [
     "downloads",
     "storage",
     "tabs",
     "nativeMessaging",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "contextMenus",
+    "clipboardWrite",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://*.durham.ac.uk/*",
@@ -55,6 +58,25 @@
         "default": "Alt+Shift+L"
       },
       "description": "Save the whole page as one HTML file"
+    },
+    "clip-region": {
+      "suggested_key": {
+        "default": "Alt+L"
+      },
+      "description": "Copy a region (text or exact image)"
     }
-  }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "vendor/pdfjs/web/viewer.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }
