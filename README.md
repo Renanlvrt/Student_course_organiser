@@ -35,6 +35,17 @@ From then on, every Blackboard download is tagged with its course code and folde
 On a course page, click the extension icon, tick sections, **Scan**, then **Download N new files**.
 Files download one at a time, and files you already have are skipped.
 
+## Save a whole page (Alt+Shift+L)
+On any web page, press **Alt+Shift+L**. The extension scrolls through lazy-loaded images, then saves the whole page
+(including parts below the fold and embedded frames) as **one `.html` file** with its images, styles and fonts inside.
+A Save As dialog lets you pick the folder and name. The file opens offline in any browser, and its text stays
+selectable and searchable. The icon shows `…` while saving, `✓` when done and `!` (hover for the reason) if the
+page can't be saved (Chrome's own pages, the Web Store and the built-in PDF viewer are off-limits to extensions).
+Pages that only render the rows you can see (e.g. long SharePoint lists) are saved as currently shown.
+If the shortcut doesn't work, set it at `chrome://extensions/shortcuts`.
+Saving uses the SingleFile library (AGPL-3.0, `extension/vendor/singlefile/`).
+Test: `python -m tests.capture_smoke` (headless Chromium via Playwright, local test pages only).
+
 ## Always on
 - The organiser starts at every Windows login (Startup shortcut, `scripts\install_startup.ps1`) and lives in the tray.
 - If it isn't running when you use the extension (it crashed, or you quit it), the extension starts it

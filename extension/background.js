@@ -1,6 +1,8 @@
 // Service worker: tags Blackboard downloads with course/section context and runs the
 // gentle one-at-a-time "download all new" queue. State lives in chrome.storage so it
 // survives the worker being suspended.
+importScripts("capture.js");
+
 const APP = "http://127.0.0.1:47821";
 const BB_HOST = /(^|\.)durham\.ac\.uk$|(^|\.)blackboard\.com$/;
 const GAP_MS = 1200;
@@ -72,6 +74,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 const ctxReady = new Map();
 
 chrome.downloads.onCreated.addListener((item) => {
+  if (captureUrls.has(item.url)) return;          // our own page save (capture.js), not a Blackboard file
   if (isBB(item.url) || isBB(item.referrer || "") || isBB(item.finalUrl || "")) {
     fetch(APP + "/status").catch(() => {});      // tells the app a tagged download is on its way
   }
