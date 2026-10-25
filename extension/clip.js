@@ -241,7 +241,8 @@
     const sx = scrollX, sy = scrollY;
     const client = (p, ox = sx, oy = sy) => DOMRect.fromRect({ x: p.left - ox, y: p.top - oy, width: p.width, height: p.height });
     const plan = mode === "text" ? extract(boxes.map((b) => client(b.page))) : null;
-    if (plan) for (const v of plan.visuals) v.page = DOMRect.fromRect({ x: v.rect.left + sx, y: v.rect.top + sy, width: v.rect.width, height: v.rect.height });
+    const toPage = (r) => DOMRect.fromRect({ x: r.left + sx, y: r.top + sy, width: r.width, height: r.height });
+    if (plan) for (const v of [...plan.visuals, ...plan.backdrops]) v.page = toPage(v.rect);
 
     const shots = [];
     const inView = (p, ox, oy) => p.top - oy >= 0 && p.bottom - oy <= innerHeight && p.left - ox >= 0 && p.right - ox <= innerWidth;
@@ -262,6 +263,24 @@
       const pieces = [];
       for (const b of boxes) pieces.push(await crop(b.page));
       if (plan) for (const v of plan.visuals) v.blob = await crop(v.page);
+      if (plan) {
+        for (const bd of plan.backdrops) {                 // highlight light text with the colour that was behind it
+          let colour = await dominantColour(await crop(bd.page));
+          const lightText = luminance(getComputedStyle(bd.src).color) > 0.6;
+          if (colour && lightText && luminance(colour) > 0.6) colour = "#404040";   // light text on a light photo: keep it readable
+          if (!colour || luminance(colour) > 0.93) continue;      // plain white behind: nothing to add
+          const wrap = (nodes) => {
+            const span = document.createElement("span");
+            span.style.backgroundColor = colour;
+            nodes[0].before(span);
+            for (const n of nodes) span.appendChild(n);
+          };
+          const kids = [...bd.node.childNodes];
+          if (kids.some((n) => n.nodeType === 1 && !/^(SPAN|A|B|STRONG|I|EM|U|S|SUB|SUP|MARK|SMALL|CODE|KBD|SAMP|BR|IMG)$/.test(n.tagName))) {
+            for (const n of kids) if (n.nodeType === Node.TEXT_NODE && n.data.trim()) wrap([n]);   // only its own text: blocks inside get theirs
+          } else if (kids.length) wrap(kids);
+        }
+      }
       const png = await stack(pieces, shots[0].ratio);
       let html, text = "", summary;
       if (plan) {
@@ -321,7 +340,7 @@
     "EM", "U", "S", "SUB", "SUP", "MARK", "SMALL", "BR", "HR", "FIGURE", "FIGCAPTION"]);
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK", "TITLE", "ALTO-CLIP"]);
   const VISUAL = new Set(["IMG", "SVG", "CANVAS", "VIDEO", "PICTURE", "IFRAME", "OBJECT", "EMBED", "MATH", "INPUT",
-    "SELECT", "TEXTAREA", "BUTTON", "METER", "PROGRESS", "AUDIO"]);
+    "SELECT", "TEXTAREA", "METER", "PROGRESS", "AUDIO"]);
   const VISUAL_SEL = ".katex, .katex-display, mjx-container, .MathJax, .MathJax_Display, .MathJax_SVG, .mwe-math-element, [role=img], [role=math]";
   const STYLE_PROPS = ["color", "font-family", "font-size", "font-weight", "font-style", "text-decoration-line",
     "vertical-align", "white-space", "line-height", "letter-spacing"];
@@ -339,61 +358,20 @@
       return DOMRect.fromRect({ x: left, y: top, width: Math.max(...parts.map((q) => q.right)) - left,
                                 height: Math.max(...parts.map((q) => q.bottom)) - top });
     };
-    // "Designed" blocks that Word/OneNote can't lay out (text over a picture, side-by-side rows such as nav bars
-    // and cards) are pasted as exact pictures instead, when they sit mostly inside the boxes.
-    const vw = innerWidth, vh = innerHeight;
-    const designBlock = (node, cs, r) => {
-      const a = clipArea(r);
-      if (!a) return false;
-      if (cs.float !== "none" && r.width < vw * 0.6 && node.querySelector("img, svg, canvas, video")) return "picture";   // floated figure + caption
-      if (r.width * r.height > vw * vh * 0.9 || a.width * a.height < r.width * r.height * 0.6) return false;
-      if (r.width < 24 || r.height < 16 || !node.textContent.trim()) return false;
-      if (/url\(|gradient\(/.test(cs.backgroundImage)) return "picture";
-      const area = r.width * r.height;
-      for (const m of node.querySelectorAll("img, video, canvas, picture, svg")) {
-        const mr = m.getBoundingClientRect();
-        if (mr.width * mr.height > area * 0.3) return "picture";                  // text laid over a big picture
-      }
-      if (/^(inline-)?(flex|grid)$/.test(cs.display)) {
-        const kids = [...node.children].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0 && k.height > 0);
-        for (let i = 1; i < kids.length; i++) {
-          const p = kids[i - 1], k = kids[i];
-          if (k.left >= p.right - 2 && k.top < p.bottom && k.bottom > p.top) {   // side by side
-            const pics = [...node.querySelectorAll("img, video, canvas, picture")].some((m) => {
-              const mr = m.getBoundingClientRect(); return mr.width > 64 && mr.height > 64;
-            });
-            return pics ? "picture" : "row";        // text-only rows (menus, key/value grids) stay editable
-          }
-        }
+    // Side-by-side boxes (flex/grid rows: menus, buttons, cards, key/value grids) become tables so they keep their
+    // layout and stay editable. Text is never turned into a picture in this mode, whatever is behind it.
+    const sideBySide = (node, cs, r) => {
+      if (!/^(inline-)?(flex|grid)$/.test(cs.display) || !clipArea(r) || !node.textContent.trim()) return false;
+      const kids = [...node.children].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0 && k.height > 0 && hit(k));
+      for (let i = 1; i < kids.length; i++) {
+        const p = kids[i - 1], k = kids[i];
+        if (k.left >= p.right - 2 && k.top < p.bottom && k.bottom > p.top) return true;
       }
       return false;
     };
-    // Text drawn on top of a picture (a hero over a background video, a caption over a photo...) can't be
-    // rebuilt either. Sample the stack of elements at points across the boxes; where text sits above an image,
-    // video, canvas or background picture, the smallest element holding both becomes an exact picture.
-    const layered = new Set();
-    const isPicture = (el) => {
-      if (el === document.body || el === document.documentElement) return false;
-      if (/^(IMG|VIDEO|CANVAS|PICTURE|IFRAME|SVG|EMBED|OBJECT)$/i.test(el.tagName)) return true;
-      const c = getComputedStyle(el);
-      return /url\(|gradient\(/.test(c.backgroundImage) && !/^repeat/.test(c.backgroundRepeat);   // not a tiled texture
-    };
-    const ownText = (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.data.trim());
-    for (const s of sels) {
-      const step = Math.max(16, Math.sqrt((s.width * s.height) / 1500));
-      for (let y = s.top + step / 2; y < s.bottom; y += step) {
-        for (let x = s.left + step / 2; x < s.right; x += step) {
-          const stack = document.elementsFromPoint(x, y);
-          const t = stack.findIndex(ownText);
-          if (t < 0) continue;
-          const m = stack.findIndex((el, i) => i > t && isPicture(el));
-          if (m < 0) continue;
-          let common = stack[m];
-          while (common && !common.contains(stack[t])) common = common.parentElement;
-          if (common && common !== document.body && common !== document.documentElement) layered.add(common);
-        }
-      }
-    }
+    // Light text needs the colour behind it (a dark section, a photo, a gradient): it is sampled from the
+    // screenshot afterwards and applied as a highlight, so white text stays readable on a white page.
+    const needsBackdrop = [];
     const visuals = [];
     const lines = [];
     let line = "";
@@ -403,8 +381,6 @@
     // the box's own width, so lines wrap where they did on screen
     out.setAttribute("style", `width:${Math.round(Math.max(...sels.map((s) => s.width)))}px;max-width:100%;` +
                               `font-family:${base.fontFamily};font-size:${base.fontSize};color:${base.color};line-height:${base.lineHeight}`);
-    const bg = effectiveBackground(document.elementFromPoint(sels[0].left + 1, sels[0].top + 1));
-    if (bg && !/^rgba?\(255, 255, 255/.test(bg)) out.style.backgroundColor = bg;
 
     const walk = (node, into, parentCs) => {
       const kids = node.shadowRoot ? node.shadowRoot.childNodes
@@ -418,9 +394,8 @@
           const r = child.getBoundingClientRect();
           const tag = child.tagName.toUpperCase();
           if (!hit(r)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
-          const design = layered.has(child) ? "picture" : designBlock(child, cs, r);
-          if (design === "row") { rowTable(child, into, cs); continue; }
-          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r) || design === "picture") {
+          if (sideBySide(child, cs, r)) { rowTable(child, into, cs); continue; }
+          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r)) {
             const area = clipArea(r);
             if (!area || area.width < 2 || area.height < 2) continue;
             const img = document.createElement("img");
@@ -436,10 +411,6 @@
             into.appendChild(img);
             visuals.push({ node: img, rect: area });
             if (isBlock(cs)) flush();
-            if (!VISUAL.has(tag) && child.innerText && child.innerText.trim()) {   // pictured text still goes in plain text
-              flush();
-              for (const l of child.innerText.split("\n")) { line = l; flush(); }
-            }
             continue;
           }
         }
@@ -447,7 +418,8 @@
         const block = isBlock(cs) && cs.display !== "table-cell";
         // headings become paragraphs stating their exact look: OneNote and Word would apply their own heading styles
         const heading = /^H[1-6]$/.test(tag);
-        const outTag = heading ? "P" : KEEP.has(tag) && tag !== "BLOCKQUOTE" ? tag : (block ? "DIV" : "SPAN");
+        const hasBlocks = [...child.children].some((k) => !/^inline/.test(getComputedStyle(k).display));
+        const outTag = heading ? (hasBlocks ? "DIV" : "P") : KEEP.has(tag) && tag !== "BLOCKQUOTE" ? tag : (block ? "DIV" : "SPAN");   // a <p> can't hold blocks
         const copy = document.createElement(outTag);
         if (tag === "A" && child.href) copy.setAttribute("href", child.href);
         for (const a of ["colspan", "rowspan", "start"]) if (child.hasAttribute(a)) copy.setAttribute(a, child.getAttribute(a));
@@ -471,6 +443,13 @@
         if (/^(TABLE|UL|OL|DL)$/.test(tag)) cellDepth--;
         if (copy.childNodes.length || tag === "HR") {
           into.appendChild(copy);
+          const behind = effectiveBackground(child);
+          const ownText = [...child.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.data.trim());
+          if ((leaf || (block && (cellDepth || ownText))) && copy.textContent.trim() &&
+              (luminance(cs.color) > 0.6 || (behind && luminance(behind) < 0.93) || backdropPicture(child))) {
+            const r = child.getBoundingClientRect();
+            needsBackdrop.push({ node: copy, rect: r, src: child });
+          }
           if (leaf) blockDone(child, cs, copy, into, spacerAt, /^(TABLE|UL|OL|DL)$/.test(tag));
         }
         if (block) flush();
@@ -504,14 +483,16 @@
           cellDepth++;
           walk(k.tagName === "LI" ? k : { childNodes: [k] }, td, cs);   // a list item's content, without a stray bullet
           cellDepth--;
-          if (n < row.cells.length - 1) line += "\t";
+          if (!td.textContent.trim() && !td.querySelector("img")) td.remove();   // nothing visible in this box
+          else if (n < row.cells.length - 1) line += "\t";
         });
+        if (!tr.cells.length) tr.remove();
         flush();
       }
       if (table.rows.length) {
         const at = into.childNodes.length;
         into.appendChild(table);
-        blockDone(node, cs, table, into, at, true);
+        if (!cellDepth) blockDone(node, cs, table, into, at, true);   // nested rows sit in their cell, no page offset
       }
     };
     // Layout in the form OneNote keeps: each paragraph-level block gets its indent (and centring) as its own
@@ -576,7 +557,7 @@
       const margin = `margin:0 ${Math.round(p.right * 0.75)}pt 0 ${Math.round((p.left - minLeft) * 0.75)}pt`;   // the 4-value form OneNote reads
       p.el.setAttribute("style", [p.el.getAttribute("style"), margin].filter(Boolean).join(";"));
     }
-    return { root: out, visuals, text: lines.join("\n") };
+    return { root: out, visuals, backdrops: needsBackdrop, text: lines.join("\n") };
   }
 
   function styleDiff(cs, parentCs, block, tag) {
@@ -587,7 +568,8 @@
           !(p === "white-space" && !/^pre/.test(v))) parts.push(`${p}:${v}`);
     }
     const bg = cs.backgroundColor;
-    if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent" && bg !== parentCs.backgroundColor) parts.push(`background-color:${bg}`);
+    if ((!block || tag === "TD" || tag === "TH") && bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent" &&
+        bg !== parentCs.backgroundColor) parts.push(`background-color:${bg}`);
     if (block) {
       if (cs.textAlign !== parentCs.textAlign && !/^(start|left)$/.test(cs.textAlign)) parts.push(`text-align:${cs.textAlign}`);
       if (tag === "BLOCKQUOTE" || parseFloat(cs.borderLeftWidth) >= 2) {
@@ -598,6 +580,32 @@
     if (tag === "TD" || tag === "TH") parts.push(cellFont(cs), "vertical-align:top");
     if (tag === "TABLE") parts.push("border-collapse:collapse");
     return parts.join(";");
+  }
+
+  // Relative luminance (0 black .. 1 white) of a CSS colour like rgb(r, g, b) or #rrggbb.
+  function luminance(css) {
+    const m = String(css).match(/\d+(\.\d+)?/g);
+    let [r, g, b] = css.startsWith("#") ? [1, 3, 5].map((k) => parseInt(css.slice(k, k + 2), 16)) : (m || [0, 0, 0]).map(Number);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  }
+  // The most common colour of a picture (the background behind a piece of text).
+  async function dominantColour(blob) {
+    const img = await createImageBitmap(blob);
+    const w = Math.min(img.width, 200), h = Math.max(1, Math.round(img.height * w / img.width));
+    const c = new OffscreenCanvas(w, h);
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h).data;
+    const tally = new Map();
+    for (let i = 0; i < px.length; i += 4) {
+      const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+      tally.set(k, (tally.get(k) || 0) + 1);
+    }
+    let best = null, n = 0;
+    for (const [k, v] of tally) if (v > n) { best = k; n = v; }
+    if (best === null) return null;
+    const ch = (v) => (((v & 15) << 4) | 8).toString(16).padStart(2, "0");
+    return `#${ch(best >> 8)}${ch(best >> 4)}${ch(best)}`;
   }
 
   // Vertical space as an empty paragraph of the right size (OneNote drops paragraph margins).
@@ -611,6 +619,12 @@
   function iconLike(node, cs, r) {                 // background-image pictures with no text of their own
     return cs.backgroundImage && cs.backgroundImage !== "none" && /url\(/.test(cs.backgroundImage) &&
            !node.textContent.trim() && r.width >= 8 && r.height >= 8;
+  }
+  function backdropPicture(node) {
+    for (let n = node; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+      if (/url\(|gradient\(/.test(getComputedStyle(n).backgroundImage)) return true;
+    }
+    return false;
   }
   function effectiveBackground(node) {
     for (let n = node; n && n.nodeType === 1; n = n.parentElement) {
@@ -713,7 +727,7 @@
   async function pdfRich(page, [x1, y1, x2, y2], raster) {
     const content = await page.getTextContent();
     const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
-    const items = [];
+    let items = [];
     for (const it of content.items) {
       if (!it.str || !it.str.trim() || !it.transform) continue;   // PDF.js fills gaps with wide space items; spacing comes from positions
       const [a, b, c, d, x, y] = it.transform;
@@ -725,6 +739,25 @@
       items.push({ str: it.str, x, y, w, size, ...font, color: glyphColor(ctx, raster, x, y - size * 0.2, x + w, y + size * 0.8) });
     }
     if (!items.length) return { text: "", html: "" };
+
+    // Ruled tables: the grid comes from the ruling lines drawn on the page (like PyMuPDF's find_tables), so text
+    // wrapped inside a cell stays in its cell instead of becoming extra rows.
+    const gridTables = rasterGrids(ctx, raster).map((g) => {
+      const cells = g.rows.slice(1).map(() => g.cols.slice(1).map(() => []));
+      for (const it of items) {
+        const cx = it.x + it.w / 2, cy = it.y + it.size * 0.35;
+        const r = g.rows.findIndex((y, k) => k < g.rows.length - 1 && cy <= y && cy >= g.rows[k + 1]);
+        const c = g.cols.findIndex((x, k) => k < g.cols.length - 1 && cx >= x && cx <= g.cols[k + 1]);
+        if (r < 0 || c < 0) continue;
+        cells[r][c].push(it);
+        it.inGrid = true;
+      }
+      const rows = cells.map((row, k) => ({ line: { y: g.rows[k], size: 0 }, cells: row.map(cellRuns) }))
+        .filter((row) => row.cells.some((c) => c.length));
+      return { kind: "table", ruled: true, rows, anchors: g.cols.slice(0, -1), right: g.cols[g.cols.length - 1],
+               top: g.rows[0], bottomLine: { y: g.rows[g.rows.length - 1], size: 0 } };
+    }).filter((t) => t.rows.length);
+    items = items.filter((it) => !it.inGrid);
 
     // lines: same baseline (within a third of the size), left to right
     items.sort((p, q) => (Math.abs(q.y - p.y) > Math.min(p.size, q.size) * 0.35 ? q.y - p.y : p.x - q.x));
@@ -751,7 +784,8 @@
       }
     }
 
-    const left = Math.min(...lines.map((l) => l.x)), right = Math.max(...lines.map((l) => l.end));
+    const left = Math.min(...lines.map((l) => l.x), ...gridTables.map((t) => t.anchors[0]));
+    const right = Math.max(...lines.map((l) => l.end), ...gridTables.map((t) => t.right));
     const width = Math.max(1, right - left);
     const centred = (l) => {
       const lm = l.x - x1, rm = x2 - l.end;
@@ -782,13 +816,16 @@
         blocks.push({ kind: "para", lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l) });
       }
     }
+    blocks.push(...gridTables);                                     // in reading order, top first (PDF y grows upwards)
+    const topOf = (b) => (b.kind === "para" ? b.lines[0].y + b.lines[0].size : b.top ?? b.rows[0].line.y + b.rows[0].line.size);
+    blocks.sort((a, b) => topOf(b) - topOf(a));
     for (let i = 0; i + 1 < blocks.length; i++) {                     // space below each block, from the baselines
       const a = blocks[i], b = blocks[i + 1];
-      const lastA = a.kind === "para" ? a.lines[a.lines.length - 1] : a.rows[a.rows.length - 1].line;
+      const lastA = a.kind === "para" ? a.lines[a.lines.length - 1] : a.bottomLine || a.rows[a.rows.length - 1].line;
       const firstB = b.kind === "para" ? b.lines[0] : b.rows[0].line;
       a.after = Math.max(0, lastA.y - firstB.y - firstB.size * 1.25);
     }
-    for (const b of blocks) if (b.kind === "table") b.ruled = isRuled(ctx, raster, b);
+    for (const b of blocks) if (b.kind === "table" && b.ruled === undefined) b.ruled = isRuled(ctx, raster, b);
 
     // HTML in the subset OneNote keeps (checked by pasting into OneNote): fonts, sizes, colours, bold/italic,
     // margin-left indents and tables. It drops centring, margins and line spacing, so centred lines are indented
@@ -830,6 +867,86 @@
       html: `<div style="width:${Math.ceil(width + 2)}pt;max-width:100%;font-family:${cssFamily(base.family)};font-size:${base.size}pt;` +
             `color:${base.color};line-height:1.15">${html}</div>`,
     };
+  }
+
+  // Runs of one table cell: its lines top to bottom, joined with spaces (the text reflows in the pasted cell).
+  function cellRuns(items) {
+    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.min(p.size, q.size) * 0.35 ? q.y - p.y : p.x - q.x));
+    const runs = [];
+    let line = [];
+    const flushLine = () => {
+      if (!line.length) return;
+      if (runs.length && !/\s$/.test(runs[runs.length - 1].s)) mergeRun(runs, { ...runs[runs.length - 1], s: " " });
+      for (const r of runsOf(line)) mergeRun(runs, r);
+      line = [];
+    };
+    for (const it of items) {
+      if (line.length && Math.abs(line[0].y - it.y) > Math.min(line[0].size, it.size) * 0.35) flushLine();
+      line.push(it);
+    }
+    flushLine();
+    return runs;
+  }
+
+  // Ruling-line grids in the rendered box: long dark horizontal and vertical runs, grouped into tables where they
+  // cross. Returns row boundaries (PDF y, top first) and column boundaries (PDF x, left first) per table.
+  function rasterGrids(ctx, { canvas, box1, scale, v1 }) {
+    const W = canvas.width, H = canvas.height;
+    if (W < 20 || H < 20) return [];
+    const px = ctx.getImageData(0, 0, W, H).data;
+    const dark = (x, y) => { const i = (y * W + x) * 4; return px[i] + px[i + 1] + px[i + 2] < 600; };   // light grey rules too
+    const minH = Math.max(40, 18 * scale), minV = Math.max(16, 14 * scale);   // longer than any glyph stroke
+    const hs = [], vs = [];
+    for (let y = 0; y < H; y++) {
+      let run = 0;
+      for (let x = 0; x <= W; x++) {
+        if (x < W && dark(x, y)) { run++; continue; }
+        if (run >= minH) hs.push({ y, x0: x - run, x1: x - 1 });
+        run = 0;
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      let run = 0;
+      for (let y = 0; y <= H; y++) {
+        if (y < H && dark(x, y)) { run++; continue; }
+        if (run >= minV) vs.push({ x, y0: y - run, y1: y - 1 });
+        run = 0;
+      }
+    }
+    // merge the pixel rows/columns of one thick line
+    const mergeH = [], mergeV = [];
+    for (const h of hs) {
+      const m = mergeH.find((o) => h.y - o.y1 <= 1 && h.x0 < o.x1 && h.x1 > o.x0);
+      if (m) { m.y1 = h.y; m.x0 = Math.min(m.x0, h.x0); m.x1 = Math.max(m.x1, h.x1); } else mergeH.push({ y0: h.y, y1: h.y, x0: h.x0, x1: h.x1 });
+    }
+    for (const v of vs) {
+      const m = mergeV.find((o) => v.x - o.x1 <= 1 && v.y0 < o.y1 && v.y1 > o.y0);
+      if (m) { m.x1 = v.x; m.y0 = Math.min(m.y0, v.y0); m.y1 = Math.max(m.y1, v.y1); } else mergeV.push({ x0: v.x, x1: v.x, y0: v.y0, y1: v.y1 });
+    }
+    const hl = mergeH.filter((h) => h.y1 - h.y0 <= 6).map((h) => ({ y: (h.y0 + h.y1) / 2, x0: h.x0, x1: h.x1 }));
+    const vl = mergeV.filter((v) => v.x1 - v.x0 <= 6).map((v) => ({ x: (v.x0 + v.x1) / 2, y0: v.y0, y1: v.y1 }));
+    // tables = groups of crossing lines (union-find)
+    const segs = [...hl.map((h) => ({ h })), ...vl.map((v) => ({ v }))];
+    const parent = segs.map((_, i) => i);
+    const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    for (let i = 0; i < hl.length; i++) {
+      for (let j = 0; j < vl.length; j++) {
+        const h = hl[i], v = vl[j];
+        if (v.x >= h.x0 - 3 && v.x <= h.x1 + 3 && h.y >= v.y0 - 3 && h.y <= v.y1 + 3) parent[find(i)] = find(hl.length + j);
+      }
+    }
+    const groups = new Map();
+    segs.forEach((sg, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, { h: [], v: [] }); groups.get(r)[sg.h ? "h" : "v"].push(sg.h || sg.v); });
+    const toPdf = (cx, cy) => v1.convertToPdfPoint(cx / scale + box1.x, cy / scale + box1.y);
+    const uniq = (vals, tol) => vals.sort((a, b) => a - b).filter((v, i, a) => i === 0 || v - a[i - 1] > tol);
+    const out = [];
+    for (const g of groups.values()) {
+      if (g.h.length < 2 || g.v.length < 2) continue;
+      const ys = uniq(g.h.map((h) => h.y), 3 * scale), xs = uniq(g.v.map((v) => v.x), 3 * scale);
+      if (ys.length < 2 || xs.length < 2) continue;
+      out.push({ rows: ys.map((y) => toPdf(xs[0], y)[1]), cols: xs.map((x) => toPdf(x, ys[0])[0]) });
+    }
+    return out;
   }
 
   function runsOf(items) {
