@@ -13,6 +13,7 @@
   const DEFAULT_MODES = { web: "image", pdf: "image" };
 
   let active = null;                               // the open overlay, if any
+  let lastToast = null;                            // removed when a new clip starts, so it never ends up in the shot
 
   // ---- overlay -------------------------------------------------------------------------------
   const CSS = `
@@ -58,6 +59,7 @@
 
   async function start() {
     if (active) return;
+    if (lastToast) { lastToast.remove(); lastToast = null; }
     const modes = await loadModes();
     const kind = isPdf() ? "pdf" : "web";
     let mode = modes[kind];
@@ -175,7 +177,9 @@
   }
 
   function toast(message, save, error) {
+    if (lastToast) lastToast.remove();
     const { host, root } = makeHost();
+    lastToast = host;
     const t = el("div", "toast" + (error ? " err" : ""));
     const span = el("span");
     span.textContent = message;
