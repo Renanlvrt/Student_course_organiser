@@ -63,6 +63,12 @@ class App:
         except Exception:
             log.exception("Could not register hotkey %s", self.cfg.hotkey)
             self.toast("Hotkey problem", f"Could not register {self.cfg.hotkey}; use the tray icon.")
+        try:                                       # Alt+L in desktop PDF viewers (only while one is in front)
+            from .desktop_clip import ForegroundHotkey
+            self.pdf_hotkey = ForegroundHotkey(lambda hwnd, title: self.uiq.put(("desktop_clip", hwnd, title)))
+            self.pdf_hotkey.start()
+        except Exception:
+            log.exception("Could not start Alt+L for PDF viewers")
 
     # ------------------------------------------------------------------ UI queue
     def _poll(self):
@@ -102,6 +108,9 @@ class App:
             self.dashboard.refresh()
         elif kind == "call":
             msg[1]()
+        elif kind == "desktop_clip":
+            from .desktop_clip import ClipOverlay
+            ClipOverlay(self, msg[1], msg[2])
         elif kind == "fix_result":
             entry_id, res, changes = msg[1], msg[2], msg[3]
             if res == "need_part":
@@ -167,6 +176,8 @@ class App:
         self._quitting = True
         if hasattr(self, "hotkey"):
             self.hotkey.stop()
+        if hasattr(self, "pdf_hotkey"):
+            self.pdf_hotkey.stop()
         self.core.shutdown()
         self.server.shutdown()
         self.tray.stop()
