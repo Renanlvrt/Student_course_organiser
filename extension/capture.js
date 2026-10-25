@@ -240,9 +240,8 @@ async function applyReaderRules() {
 chrome.runtime.onInstalled.addListener(async () => {
   chrome.contextMenus.create({ id: READER_KEY, title: "Open PDFs in the built-in reader (for Alt+L)",
                                type: "checkbox", checked: await readerOn(), contexts: ["action"] });
-  applyReaderRules();
 });
-chrome.runtime.onStartup.addListener(applyReaderRules);
+applyReaderRules();                                // every time the worker starts; the call is idempotent
 chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId !== READER_KEY) return;
   await chrome.storage.local.set({ [READER_KEY]: info.checked });

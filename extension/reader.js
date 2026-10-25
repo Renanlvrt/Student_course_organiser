@@ -13,12 +13,8 @@
     const app = window.PDFViewerApplication;
     app.initializedPromise.then(() => {
       if (!src) return;
-      app.open({ url: src, originalUrl: src, withCredentials: true, isEvalSupported: false }).catch((e) => {
-        if (src.startsWith("file:")) {
-          alert("To open PDFs from your computer here, turn on \"Allow access to file URLs\" for the " +
-                "Alt+O Blackboard Helper extension in chrome://extensions.\n\n" + e);
-        }
-      });
+      if (src.startsWith("file:")) openLocal(app, src.split("#")[0]);
+      else app.open({ url: src, originalUrl: src, withCredentials: true, isEvalSupported: false });
       if (params.get("clip") === "1") {
         app.eventBus.on("pagerendered", function once() {
           app.eventBus.off("pagerendered", once);
@@ -27,6 +23,28 @@
       }
     });
   }, { once: true });
+
+  // fetch() never reads file: URLs, even with file access granted; XMLHttpRequest does (as in Mozilla's
+  // PDF.js extension). The bytes are then handed to the viewer.
+  function openLocal(app, url) {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url);
+    xhr.responseType = "arraybuffer";
+    xhr.onload = () => {
+      if (!xhr.response || !xhr.response.byteLength) return xhr.onerror();
+      const filename = decodeURIComponent(url.slice(url.lastIndexOf("/") + 1));
+      app.open({ data: new Uint8Array(xhr.response), filename, isEvalSupported: false })
+        .then(() => { document.title = filename; });
+    };
+    xhr.onerror = () => {
+      chrome.extension.isAllowedFileSchemeAccess((allowed) => {
+        alert(allowed ? "Couldn't read this PDF from your computer:\n" + decodeURI(url)
+                      : "To open PDFs from your computer here, turn on \"Allow access to file URLs\" for the " +
+                        "Alt+O Blackboard Helper extension in chrome://extensions.");
+      });
+    };
+    xhr.send();
+  }
 
   // Alt+L in this tab: the service worker cannot inject into extension pages, so it asks us.
   let myTabId = null;

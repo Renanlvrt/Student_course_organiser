@@ -49,16 +49,21 @@ Test: `python -m tests.capture_smoke` (headless Chromium via Playwright, local t
 ## Copy a region (Alt+L)
 Press **Alt+L** on any web page or PDF, then **drag a box** (or **click** a block on a web page, or a whole page in
 a PDF). It is copied at once; paste it anywhere with **Ctrl+V** (OneNote, Word, chat…). Esc or right-click cancels.
-- **Exact image** (default, key **I**): the box exactly as it looks on screen, at the same size as Win+Shift+S.
-- **Editable text** (key **T**): the real text with its formatting (headings, bold, colours, lists, tables) so you can
-  highlight and edit it; pictures, diagrams and formulas inside the box come along as exact screen crops.
+
+**Several boxes:** hold **Shift** while you drag (or click) to keep a box and add another; kept boxes stay outlined
+in green and numbered, and you can scroll between them. Release without Shift (or press **Enter**) to copy them all
+together, in page order. **Backspace** removes the last box.
+- **Editable text** (default, key **T**): the real text with its formatting (headings, bold, colours, lists, tables)
+  so you can highlight and edit it; pictures, diagrams and formulas inside the box come along as exact screen crops.
   It also puts plain text on the clipboard for apps that only take text.
+- **Exact image** (key **I**): the box exactly as it looks on screen, at the same size as Win+Shift+S (several boxes
+  are stacked into one picture).
 The last mode is remembered (separately for web pages and PDFs).
 
 **PDFs** open in a built-in reader (PDF.js, the reader Firefox uses) instead of Chrome's, because Chrome's viewer
 can't be read by extensions. There, Alt+L redraws the box straight from the PDF, takes the text from the PDF itself,
-and the **Save…** button in the confirmation saves a **cropped vector PDF** of just the box (sharp at any zoom, with
-selectable text). Blackboard downloads (sent as attachments) still download and get sorted as before. PDFs from your
+and the **Save…** button in the confirmation saves a **cropped vector PDF** of just the box (one page per box; sharp
+at any zoom, with selectable text). Blackboard downloads (sent as attachments) still download and get sorted as before. PDFs from your
 own computer open in the reader once **Allow access to file URLs** is on for the extension in `chrome://extensions`.
 To keep Chrome's own viewer, right-click the extension icon and untick **Open PDFs in the built-in reader**.
 Libraries: PDF.js (Apache-2.0, `extension/vendor/pdfjs/`), pdf-lib (MIT, `extension/vendor/pdf-lib/`).

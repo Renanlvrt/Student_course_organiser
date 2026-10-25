@@ -1,7 +1,8 @@
 // Alt+L: drag a box (or click a block) and the content under it goes to the clipboard, ready for Ctrl+V.
-//   Image mode (default): one exact picture of the box, at the screen's own pixel size (pastes like Win+Shift+S).
-//   Text mode:  real text with its formatting; images, diagrams, formulas and other visuals come along as exact
+// Hold Shift to add several boxes; they are copied together, in page order.
+//   Text mode (default): real text with its formatting; images, diagrams, formulas and other visuals come along as exact
 //               crops of the screen. Also puts plain text and a PNG of the whole box on the clipboard.
+//   Image mode: one exact picture of the box, at the screen's own pixel size (pastes like Win+Shift+S).
 // In the built-in PDF reader the picture is re-rendered from the PDF at screen resolution, the text comes from the PDF,
 // and "Save…" writes a cropped vector PDF of just the box.
 // Injected into web pages by capture.js; included by the PDF reader (vendor/pdfjs/web/viewer.html).
@@ -10,7 +11,7 @@
 
   const isPdf = () => !!(globalThis.PDFViewerApplication && globalThis.PDFViewerApplication.pdfDocument);
   const MODE_KEY = "clipMode";                     // { web: "text" | "image", pdf: "text" | "image" }
-  const DEFAULT_MODES = { web: "image", pdf: "image" };
+  const DEFAULT_MODES = { web: "text", pdf: "text" };
 
   let active = null;                               // the open overlay, if any
   let lastToast = null;                            // removed when a new clip starts, so it never ends up in the shot
@@ -22,6 +23,10 @@
     .layer.has-box { background: transparent; }
     .box { position: fixed; border: 2px solid #fff; outline: 1px solid rgba(37,99,235,.9);
            box-shadow: 0 0 0 100vmax rgba(15,23,42,.38); pointer-events: none; display: none; }
+    .kept { position: fixed; border: 2px solid #22c55e; background: rgba(34,197,94,.14); pointer-events: none;
+            align-items: flex-start; padding: 4px 6px; box-sizing: border-box;
+            font: 700 12px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 0 3px #000; }
+    .box.plain { box-shadow: none; }
     .hover { position: fixed; border: 2px dashed #60a5fa; background: rgba(96,165,250,.12); pointer-events: none; display: none; }
     .size { position: fixed; font: 600 11px/1 system-ui, sans-serif; color: #fff; background: rgba(15,23,42,.85);
             padding: 4px 6px; border-radius: 4px; pointer-events: none; display: none; }
@@ -65,14 +70,14 @@
     let mode = modes[kind];
     const { host, root } = makeHost();
     const layer = el("div", "layer"), box = el("div", "box"), hover = el("div", "hover"), size = el("div", "size");
+    const keptLayer = el("div");
     const bar = el("div", "bar");
     const textBtn = el("button"), imgBtn = el("button");
-    imgBtn.innerHTML = "Exact image<u>I</u>";
     textBtn.innerHTML = "Editable text<u>T</u>";
+    imgBtn.innerHTML = "Exact image<u>I</u>";
     const hint = el("span", "hint");
-    hint.textContent = kind === "pdf" ? "Drag a box · click = whole page · Esc" : "Drag a box · click a block · Esc";
-    bar.append(imgBtn, textBtn, hint);
-    root.append(layer, hover, box, size, bar);
+    bar.append(textBtn, imgBtn, hint);
+    root.append(layer, keptLayer, hover, box, size, bar);
     const paint = () => { textBtn.classList.toggle("on", mode === "text"); imgBtn.classList.toggle("on", mode === "image"); };
     const setMode = (m) => {
       mode = m; paint();
@@ -81,13 +86,40 @@
     };
     paint();
 
+    // Boxes kept with Shift. Stored scroll-independently (page coordinates, or PDF page + PDF rectangle)
+    // so you can scroll between them.
+    const boxes = [];
+    const scroller = kind === "pdf" ? document.getElementById("viewerContainer") : window;
+    const toBox = (r) => kind === "pdf" ? pdfTarget(r)
+      : { page: DOMRect.fromRect({ x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height }) };
+    const onScreen = (b) => kind === "pdf" ? pdfScreenRect(b)
+      : DOMRect.fromRect({ x: b.page.left - scrollX, y: b.page.top - scrollY, width: b.page.width, height: b.page.height });
+    const redraw = () => {
+      keptLayer.replaceChildren(...boxes.map((b, i) => {
+        const k = el("div", "kept");
+        show(k, onScreen(b));
+        k.textContent = String(i + 1);
+        return k;
+      }));
+      layer.classList.remove("has-box");           // with kept boxes the layer dims, not the drag box
+      hint.textContent = boxes.length
+        ? `${plural(boxes.length, "box")} · Shift+drag to add more · Enter to copy · ⌫ undo · Esc`
+        : (kind === "pdf" ? "Drag a box · click = whole page" : "Drag a box · click a block") + " · Shift = several · Esc";
+    };
+
     let startPt = null, dragging = false, picked = null;
     const close = () => {
       host.remove();
       window.removeEventListener("keydown", onKey, true);
+      scroller.removeEventListener("scroll", redraw);
       active = null;
     };
     active = { close };
+    const done = () => {
+      if (!boxes.length) return;
+      close();
+      finish(boxes.slice(), mode, kind);
+    };
 
     const pick = (x, y) => {                       // block under the cursor, for click-to-clip
       host.style.pointerEvents = "none";
@@ -97,11 +129,11 @@
       layer.style.pointerEvents = "";
       return kind === "pdf" ? pdfPageRect(target) : blockRect(target);
     };
-    const show = (node, r) => {
+    function show(node, r) {
       if (!r) { node.style.display = "none"; return; }
-      Object.assign(node.style, { display: "block", left: r.left + "px", top: r.top + "px",
+      Object.assign(node.style, { display: "flex", left: r.left + "px", top: r.top + "px",
                                   width: r.width + "px", height: r.height + "px" });
-    };
+    }
 
     // Pointer events: the PDF reader cancels pointerdown, which would suppress the mouse* events.
     layer.addEventListener("pointerdown", (e) => {
@@ -120,7 +152,8 @@
       if (!dragging && Math.hypot(e.clientX - startPt.x, e.clientY - startPt.y) < 5) return;
       dragging = true;
       hover.style.display = "none";
-      layer.classList.add("has-box");
+      if (!boxes.length) layer.classList.add("has-box");
+      box.classList.toggle("plain", boxes.length > 0);
       const r = rectFrom(startPt, { x: e.clientX, y: e.clientY });
       show(box, r);
       Object.assign(size.style, { display: "block", left: r.left + "px", top: Math.max(0, r.top - 22) + "px" });
@@ -130,23 +163,29 @@
       if (!startPt) return;
       const r = dragging ? rectFrom(startPt, { x: e.clientX, y: e.clientY }) : picked;
       startPt = null;
-      if (!r || r.width < 4 || r.height < 4) return;
-      close();
-      finish(r, mode, kind);
+      box.style.display = size.style.display = "none";
+      if (r && r.width >= 4 && r.height >= 4) {
+        try { boxes.push(toBox(r)); } catch (err) { /* PDF box outside every page */ }
+      }
+      redraw();
+      if (!(e.shiftKey || e.ctrlKey)) done();
     });
     layer.addEventListener("wheel", (e) => {
-      const scroller = kind === "pdf" ? document.getElementById("viewerContainer") : null;
-      (scroller || window).scrollBy(e.deltaX, e.deltaY);
+      scroller.scrollBy(e.deltaX, e.deltaY);
       e.preventDefault();
     }, { passive: false });
+    scroller.addEventListener("scroll", redraw, { passive: true });
     layer.addEventListener("contextmenu", (e) => { e.preventDefault(); close(); });
     textBtn.addEventListener("click", () => setMode("text"));
     imgBtn.addEventListener("click", () => setMode("image"));
     bar.addEventListener("pointerdown", (e) => e.stopPropagation());
+    redraw();
 
     function onKey(e) {
       const k = e.key.toLowerCase();
       if (k === "escape") close();
+      else if (k === "enter") done();
+      else if (k === "backspace") { boxes.pop(); redraw(); }
       else if (k === "t") setMode("text");
       else if (k === "i") setMode("image");
       else return;
@@ -156,10 +195,10 @@
     window.addEventListener("keydown", onKey, true);
   }
 
-  // ---- after the box is chosen ---------------------------------------------------------------
-  // The clipboard write starts right away (inside the mouse-up gesture) with promises for each format.
-  function finish(rect, mode, kind) {
-    const work = kind === "pdf" ? pdfClip(rect, mode) : webClip(rect, mode);
+  // ---- after the boxes are chosen ------------------------------------------------------------
+  // The clipboard write starts right away (inside the gesture) with promises for each format.
+  function finish(boxes, mode, kind) {
+    const work = kind === "pdf" ? pdfClip(boxes, mode) : webClip(boxes, mode);
     const item = {};
     item["image/png"] = work.then((r) => r.png);  // Chrome also writes it as a Windows bitmap
     if (mode === "text") {                         // image mode stays a plain picture, which every app pastes
@@ -195,30 +234,67 @@
   }
 
   // ---- web pages -----------------------------------------------------------------------------
-  async function webClip(sel, mode) {
-    const shot = screenshot();                     // overlay is already gone; capture waits a frame
-    const plan = mode === "text" ? extract(sel) : null;
-    const img = await shot;
-    const ratio = img.width / window.innerWidth;
-    const png = await cropPng(img, sel, ratio);
-    const pngUri = await blobToDataUri(png);
-    const w = Math.round(sel.width), h = Math.round(sel.height);
-    let html, text = "", summary;
-    if (plan) {
-      await Promise.all(plan.visuals.map(async ({ node, rect }) => {
-        node.src = await blobToDataUri(await cropPng(img, rect, ratio));
-      }));
-      html = plan.root.outerHTML;
-      text = plan.text;
-      summary = text.trim() ? `Copied text${plan.visuals.length ? " + " + plural(plan.visuals.length, "picture") : ""} · Ctrl+V`
-                            : "Copied picture · Ctrl+V";
-      if (!text.trim() && !plan.visuals.length) html = imgTag(pngUri, w, h);
-    } else {
-      html = imgTag(pngUri, w, h);
-      summary = "Copied exact image · Ctrl+V";
+  // Boxes are in page coordinates. Text comes from the DOM; pixels from screenshots: one if every box is
+  // in view, otherwise the page is scrolled to each box in turn (then put back).
+  async function webClip(boxes, mode) {
+    boxes = boxes.slice().sort((a, b) => a.page.top - b.page.top || a.page.left - b.page.left);
+    const sx = scrollX, sy = scrollY;
+    const client = (p, ox = sx, oy = sy) => DOMRect.fromRect({ x: p.left - ox, y: p.top - oy, width: p.width, height: p.height });
+    const plan = mode === "text" ? extract(boxes.map((b) => client(b.page))) : null;
+    if (plan) for (const v of plan.visuals) v.page = DOMRect.fromRect({ x: v.rect.left + sx, y: v.rect.top + sy, width: v.rect.width, height: v.rect.height });
+
+    const shots = [];
+    const inView = (p, ox, oy) => p.top - oy >= 0 && p.bottom - oy <= innerHeight && p.left - ox >= 0 && p.right - ox <= innerWidth;
+    const shotFor = async (p) => {
+      let s = shots.find((t) => inView(p, t.x, t.y));
+      if (s) return s;
+      if (shots.length || !inView(p, sx, sy)) {
+        window.scrollTo(sx, Math.max(0, p.top - 8));
+        if (shots.length) await new Promise((r) => setTimeout(r, 550));   // captureVisibleTab: max 2 per second
+      }
+      const img = await screenshot();
+      s = { img, x: scrollX, y: scrollY, ratio: img.width / innerWidth };
+      shots.push(s);
+      return s;
+    };
+    const crop = async (p) => { const s = await shotFor(p); return cropPng(s.img, client(p, s.x, s.y), s.ratio); };
+    try {
+      const pieces = [];
+      for (const b of boxes) pieces.push(await crop(b.page));
+      if (plan) for (const v of plan.visuals) v.blob = await crop(v.page);
+      const png = await stack(pieces, shots[0].ratio);
+      let html, text = "", summary;
+      if (plan) {
+        for (const v of plan.visuals) v.node.src = await blobToDataUri(v.blob);
+        html = plan.root.outerHTML;
+        text = plan.text;
+        const pics = plan.visuals.length ? " + " + plural(plan.visuals.length, "picture") : "";
+        summary = text.trim() ? `Copied text${pics}${boxes.length > 1 ? ` from ${boxes.length} boxes` : ""} · Ctrl+V`
+                              : "Copied picture · Ctrl+V";
+        if (!text.trim() && !plan.visuals.length) html = imgTag(await blobToDataUri(png), Math.round(boxes[0].page.width), Math.round(boxes[0].page.height));
+      } else {
+        summary = `Copied exact image${boxes.length > 1 ? ` of ${boxes.length} boxes` : ""} · Ctrl+V`;
+      }
+      const save = () => saveBlob(png, fileStem(document.title) + " clip.png");
+      return { png, html, text, summary, save };
+    } finally {
+      if (scrollX !== sx || scrollY !== sy) window.scrollTo(sx, sy);
     }
-    const save = () => saveBlob(png, fileStem(document.title) + " clip.png");
-    return { png, html, text, summary, save };
+  }
+
+  // Several crops one above the other on white, for the image flavour of a multi-box clip.
+  async function stack(blobs, ratio) {
+    if (blobs.length === 1) return blobs[0];
+    const imgs = await Promise.all(blobs.map((b) => createImageBitmap(b)));
+    const gap = Math.round(12 * (ratio || 1));
+    const c = new OffscreenCanvas(Math.max(...imgs.map((i) => i.width)),
+                                  imgs.reduce((h, i) => h + i.height, 0) + gap * (imgs.length - 1));
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, c.width, c.height);
+    let y = 0;
+    for (const i of imgs) { g.drawImage(i, 0, y); y += i.height + gap; }
+    return c.convertToBlob({ type: "image/png" });
   }
 
   async function screenshot() {
@@ -252,6 +328,17 @@
   const BLOCK_PROPS = ["text-align", "background-color", "margin-left", "padding-left"];
 
   function extract(sel) {
+    const sels = [].concat(sel);                   // one box or several (client coordinates)
+    const hit = (r) => sels.some((s) => intersects(r, s));
+    const within = (r) => sels.some((s) => inside(r, s));
+    const centred = (r) => sels.some((s) => centreIn(r, s));
+    const clipArea = (r) => {                      // part of r inside the boxes (their bounding box if several)
+      const parts = sels.map((s) => intersect(r, s)).filter(Boolean);
+      if (!parts.length) return null;
+      const left = Math.min(...parts.map((q) => q.left)), top = Math.min(...parts.map((q) => q.top));
+      return DOMRect.fromRect({ x: left, y: top, width: Math.max(...parts.map((q) => q.right)) - left,
+                                height: Math.max(...parts.map((q) => q.bottom)) - top });
+    };
     const visuals = [];
     const lines = [];
     let line = "";
@@ -259,7 +346,7 @@
     const out = document.createElement("div");
     const base = getComputedStyle(document.body);
     out.setAttribute("style", `font-family:${base.fontFamily};font-size:${base.fontSize};color:${base.color}`);
-    const bg = effectiveBackground(document.elementFromPoint(sel.left + 1, sel.top + 1));
+    const bg = effectiveBackground(document.elementFromPoint(sels[0].left + 1, sels[0].top + 1));
     if (bg && !/^rgba?\(255, 255, 255/.test(bg)) out.style.backgroundColor = bg;
 
     const walk = (node, into, parentCs) => {
@@ -273,9 +360,9 @@
         if (cs.display !== "contents") {
           const r = child.getBoundingClientRect();
           const tag = child.tagName.toUpperCase();
-          if (!intersects(r, sel)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
+          if (!hit(r)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
           if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r)) {
-            const area = intersect(r, sel);
+            const area = clipArea(r);
             if (!area || area.width < 2 || area.height < 2) continue;
             const img = document.createElement("img");
             img.setAttribute("width", Math.round(area.width));
@@ -311,9 +398,9 @@
       const range = document.createRange();
       range.selectNodeContents(node);
       const rects = [...range.getClientRects()];
-      if (!rects.some((r) => intersects(r, sel))) return;
+      if (!rects.some(hit)) return;
       let kept = s;
-      if (!rects.every((r) => inside(r, sel))) {   // on the edge: keep the words whose centre is inside
+      if (!rects.every(within)) {   // on the edge: keep the words whose centre is inside
         kept = "";
         const parts = s.split(/(\s+)/);
         let at = 0;
@@ -322,7 +409,7 @@
             range.setStart(node, at);
             range.setEnd(node, at + p.length);
             const wr = range.getBoundingClientRect();
-            if (centreIn(wr, sel)) kept += (kept && !/\s$/.test(kept) ? " " : "") + p;
+            if (centred(wr)) kept += (kept && !/\s$/.test(kept) ? " " : "") + p;
           } else if (kept) kept += p;
           at += p.length;
         }
@@ -408,40 +495,55 @@
     }
     if (!best) throw new Error("the box isn't over a page");
     const n = parseInt(best.div.getAttribute("data-page-number"), 10);
-    const view = app.pdfViewer.getPageView(n - 1);
-    const vp = view.viewport;
+    const vp = app.pdfViewer.getPageView(n - 1).viewport;
     const p1 = vp.convertToPdfPoint(best.a.left - best.r.left, best.a.top - best.r.top);
     const p2 = vp.convertToPdfPoint(best.a.right - best.r.left, best.a.bottom - best.r.top);
     const pdfRect = [Math.min(p1[0], p2[0]), Math.min(p1[1], p2[1]), Math.max(p1[0], p2[0]), Math.max(p1[1], p2[1])];
-    return { app, n, view, pdfRect, screen: best.a };
+    return { n, pdfRect, cssWidth: best.a.width };
   }
 
-  async function pdfClip(sel, mode) {
-    const { app, n, view, pdfRect, screen } = pdfTarget(sel);
-    const page = view.pdfPage || await app.pdfDocument.getPage(n);
-    const rotation = view.viewport.rotation;
-    const v1 = page.getViewport({ scale: 1, rotation });
-    const [a, b] = v1.convertToViewportPoint(pdfRect[0], pdfRect[1]);
-    const [c, d] = v1.convertToViewportPoint(pdfRect[2], pdfRect[3]);
-    const box1 = { x: Math.min(a, c), y: Math.min(b, d), w: Math.abs(c - a), h: Math.abs(d - b) };
-    // Same pixel size as the box on screen (Chrome drops DPI tags, so pixels decide the pasted size).
-    const scale = (screen.width * devicePixelRatio) / box1.w;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(box1.w * scale));
-    canvas.height = Math.max(1, Math.round(box1.h * scale));
-    const ctx = canvas.getContext("2d");
-    await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale, rotation }), background: "white",
-                        transform: [1, 0, 0, 1, -box1.x * scale, -box1.y * scale] }).promise;
-    const png = await new Promise((r) => canvas.toBlob(r, "image/png"));
-    const pngUri = await blobToDataUri(png);
-    const w = Math.round(screen.width), h = Math.round(screen.height);
-    const lines = await pdfLines(page, pdfRect);
-    const text = lines.map((l) => l.text).join("\n");
-    const html = mode === "text" && text.trim() ? pdfTextHtml(lines) : imgTag(pngUri, w, h);
-    const summary = mode === "text" && text.trim() ? `Copied text from page ${n} · Ctrl+V`
-                                                   : `Copied exact clip of page ${n} · Ctrl+V`;
-    const title = (app._title || document.title || "document").replace(/\.pdf$/i, "");
-    const save = () => savePdfCrop(app, n, pdfRect, `${fileStem(title)} - p${n} clip.pdf`);
+  // Where a kept PDF box is on screen now (after scrolling or zooming).
+  function pdfScreenRect({ n, pdfRect }) {
+    const view = globalThis.PDFViewerApplication.pdfViewer.getPageView(n - 1);
+    const wrap = view && (view.div.querySelector(".canvasWrapper") || view.div);
+    if (!wrap) return null;
+    const r = wrap.getBoundingClientRect();
+    const [a, b] = view.viewport.convertToViewportPoint(pdfRect[0], pdfRect[1]);
+    const [c, d] = view.viewport.convertToViewportPoint(pdfRect[2], pdfRect[3]);
+    return DOMRect.fromRect({ x: r.left + Math.min(a, c), y: r.top + Math.min(b, d), width: Math.abs(c - a), height: Math.abs(d - b) });
+  }
+
+  async function pdfClip(boxes, mode) {
+    const app = globalThis.PDFViewerApplication;
+    boxes = boxes.slice().sort((a, b) => a.n - b.n || b.pdfRect[3] - a.pdfRect[3] || a.pdfRect[0] - b.pdfRect[0]);
+    const pieces = [], htmls = [], texts = [];
+    for (const { n, pdfRect, cssWidth } of boxes) {
+      const page = await app.pdfDocument.getPage(n);
+      const rotation = app.pdfViewer.getPageView(n - 1).viewport.rotation;
+      const v1 = page.getViewport({ scale: 1, rotation });
+      const [a, b] = v1.convertToViewportPoint(pdfRect[0], pdfRect[1]);
+      const [c, d] = v1.convertToViewportPoint(pdfRect[2], pdfRect[3]);
+      const box1 = { x: Math.min(a, c), y: Math.min(b, d), w: Math.abs(c - a), h: Math.abs(d - b) };
+      // Same pixel size as the box on screen (Chrome drops DPI tags, so pixels decide the pasted size).
+      const scale = (cssWidth * devicePixelRatio) / box1.w;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(box1.w * scale));
+      canvas.height = Math.max(1, Math.round(box1.h * scale));
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: page.getViewport({ scale, rotation }),
+                          background: "white", transform: [1, 0, 0, 1, -box1.x * scale, -box1.y * scale] }).promise;
+      pieces.push(await new Promise((r) => canvas.toBlob(r, "image/png")));
+      const lines = await pdfLines(page, pdfRect);
+      texts.push(lines.map((l) => l.text).join("\n"));
+      htmls.push(pdfTextHtml(lines));
+    }
+    const png = await stack(pieces, devicePixelRatio);
+    const text = texts.filter((t) => t.trim()).join("\n\n");
+    const pages = [...new Set(boxes.map((b) => b.n))];
+    const where = pages.length === 1 ? `page ${pages[0]}` : `pages ${pages.join(", ")}`;
+    const html = text.trim() ? htmls.join("") : `<img src="${await blobToDataUri(png)}">`;
+    const summary = mode === "text" && text.trim() ? `Copied text from ${where} · Ctrl+V` : `Copied exact clip of ${where} · Ctrl+V`;
+    const title = (document.title || "document").replace(/\.pdf$/i, "");
+    const save = () => savePdfCrop(app, boxes, `${fileStem(title)} - p${pages.join("+")} clip.pdf`);
     return { png, html, text, summary, save };
   }
 
@@ -499,8 +601,8 @@
     return `<div style="font-family:Calibri,Arial,sans-serif">${out.join("")}</div>`;
   }
 
-  // A one-page PDF holding only the box: the original vectors and text, cropped (pdf-lib).
-  async function savePdfCrop(app, n, [x1, y1, x2, y2], filename) {
+  // A PDF holding only the boxes, one per page: the original vectors and text, cropped (pdf-lib).
+  async function savePdfCrop(app, boxes, filename) {
     if (!globalThis.PDFLib) {
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
@@ -512,10 +614,12 @@
     const { PDFDocument } = globalThis.PDFLib;
     const src = await PDFDocument.load(await app.pdfDocument.getData(), { ignoreEncryption: true });
     const out = await PDFDocument.create();
-    const [copied] = await out.copyPages(src, [n - 1]);
-    copied.setMediaBox(x1, y1, x2 - x1, y2 - y1);
-    copied.setCropBox(x1, y1, x2 - x1, y2 - y1);
-    out.addPage(copied);
+    for (const { n, pdfRect: [x1, y1, x2, y2] } of boxes) {
+      const [copied] = await out.copyPages(src, [n - 1]);
+      copied.setMediaBox(x1, y1, x2 - x1, y2 - y1);
+      copied.setCropBox(x1, y1, x2 - x1, y2 - y1);
+      out.addPage(copied);
+    }
     return saveBlob(new Blob([await out.save()], { type: "application/pdf" }), filename);
   }
 
