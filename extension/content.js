@@ -178,6 +178,7 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (window !== window.top) return false; // only the top frame answers
+    if (!["context", "listSections", "collect"].includes(msg.type)) return false; // e.g. page-save messages
     const run = async () => {
       try {
         if (msg.type === "context") return await contextFor(msg.url);

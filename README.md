@@ -40,7 +40,7 @@ On any web page, press **Alt+Shift+L**. The extension scrolls through lazy-loade
 (including parts below the fold and embedded frames) as **one `.html` file** with its images, styles and fonts inside.
 A Save As dialog lets you pick the folder and name. The file opens offline in any browser, and its text stays
 selectable and searchable. The icon shows `…` while saving, `✓` when done and `!` (hover for the reason) if the
-page can't be saved (Chrome's own pages, the Web Store and the built-in PDF viewer are off-limits to extensions).
+page can't be saved (Chrome's own pages and the Web Store are off-limits to extensions; PDFs are a later phase).
 Pages that only render the rows you can see (e.g. long SharePoint lists) are saved as currently shown.
 If the shortcut doesn't work, set it at `chrome://extensions/shortcuts`.
 Saving uses the SingleFile library (AGPL-3.0, `extension/vendor/singlefile/`).
