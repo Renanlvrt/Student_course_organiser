@@ -165,7 +165,12 @@ const readerUrl = (src, clip) => `${READER}?src=${encodeURIComponent(src)}${clip
 async function startClip(tab) {
   const tabId = tab.id;
   if ((tab.url || "").startsWith(READER)) {        // our reader: it starts the overlay itself
-    chrome.runtime.sendMessage({ type: "clip-start", tabId }).catch(() => {});
+    const r = await chrome.runtime.sendMessage({ type: "clip-start", tabId }).catch(() => null);
+    if (!r) {                                      // no answer (page from an older extension load): reopen and clip
+      const url = new URL(tab.url);
+      const src = url.search.startsWith("?DNR:") ? url.search.slice(5) : url.searchParams.get("src");
+      if (src) await chrome.tabs.update(tabId, { url: readerUrl(src, true) });
+    }
     return;
   }
   try {

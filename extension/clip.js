@@ -324,7 +324,7 @@
     "SELECT", "TEXTAREA", "BUTTON", "METER", "PROGRESS", "AUDIO"]);
   const VISUAL_SEL = ".katex, .katex-display, mjx-container, .MathJax, .MathJax_Display, .MathJax_SVG, .mwe-math-element, [role=img], [role=math]";
   const STYLE_PROPS = ["color", "font-family", "font-size", "font-weight", "font-style", "text-decoration-line",
-    "vertical-align", "white-space"];
+    "vertical-align", "white-space", "line-height", "letter-spacing"];
   const BLOCK_PROPS = ["text-align", "background-color", "margin-left", "padding-left"];
 
   function extract(sel) {
@@ -339,13 +339,65 @@
       return DOMRect.fromRect({ x: left, y: top, width: Math.max(...parts.map((q) => q.right)) - left,
                                 height: Math.max(...parts.map((q) => q.bottom)) - top });
     };
+    // "Designed" blocks that Word/OneNote can't lay out (text over a picture, side-by-side rows such as nav bars
+    // and cards) are pasted as exact pictures instead, when they sit mostly inside the boxes.
+    const vw = innerWidth, vh = innerHeight;
+    const designBlock = (node, cs, r) => {
+      const a = clipArea(r);
+      if (!a) return false;
+      if (cs.float !== "none" && r.width < vw * 0.6 && node.querySelector("img, svg, canvas, video")) return true;   // floated figure + caption
+      if (r.width * r.height > vw * vh * 0.9 || a.width * a.height < r.width * r.height * 0.6) return false;
+      if (r.width < 24 || r.height < 16 || !node.textContent.trim()) return false;
+      if (/url\(|gradient\(/.test(cs.backgroundImage)) return true;
+      const area = r.width * r.height;
+      for (const m of node.querySelectorAll("img, video, canvas, picture, svg")) {
+        const mr = m.getBoundingClientRect();
+        if (mr.width * mr.height > area * 0.3) return true;                       // text laid over a big picture
+      }
+      if (/^(inline-)?(flex|grid)$/.test(cs.display)) {
+        const kids = [...node.children].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0 && k.height > 0);
+        for (let i = 1; i < kids.length; i++) {
+          const p = kids[i - 1], k = kids[i];
+          if (k.left >= p.right - 2 && k.top < p.bottom && k.bottom > p.top) return true;   // side by side
+        }
+      }
+      return false;
+    };
+    // Text drawn on top of a picture (a hero over a background video, a caption over a photo...) can't be
+    // rebuilt either. Sample the stack of elements at points across the boxes; where text sits above an image,
+    // video, canvas or background picture, the smallest element holding both becomes an exact picture.
+    const layered = new Set();
+    const isPicture = (el) => {
+      if (el === document.body || el === document.documentElement) return false;
+      if (/^(IMG|VIDEO|CANVAS|PICTURE|IFRAME|SVG|EMBED|OBJECT)$/i.test(el.tagName)) return true;
+      const c = getComputedStyle(el);
+      return /url\(|gradient\(/.test(c.backgroundImage) && !/^repeat/.test(c.backgroundRepeat);   // not a tiled texture
+    };
+    const ownText = (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.data.trim());
+    for (const s of sels) {
+      const step = Math.max(16, Math.sqrt((s.width * s.height) / 1500));
+      for (let y = s.top + step / 2; y < s.bottom; y += step) {
+        for (let x = s.left + step / 2; x < s.right; x += step) {
+          const stack = document.elementsFromPoint(x, y);
+          const t = stack.findIndex(ownText);
+          if (t < 0) continue;
+          const m = stack.findIndex((el, i) => i > t && isPicture(el));
+          if (m < 0) continue;
+          let common = stack[m];
+          while (common && !common.contains(stack[t])) common = common.parentElement;
+          if (common && common !== document.body && common !== document.documentElement) layered.add(common);
+        }
+      }
+    }
     const visuals = [];
     const lines = [];
     let line = "";
     const flush = () => { if (line.trim()) lines.push(line.replace(/ +/g, " ").trim()); line = ""; };
     const out = document.createElement("div");
     const base = getComputedStyle(document.body);
-    out.setAttribute("style", `font-family:${base.fontFamily};font-size:${base.fontSize};color:${base.color}`);
+    // the box's own width, so lines wrap where they did on screen
+    out.setAttribute("style", `width:${Math.round(Math.max(...sels.map((s) => s.width)))}px;max-width:100%;` +
+                              `font-family:${base.fontFamily};font-size:${base.fontSize};color:${base.color};line-height:${base.lineHeight}`);
     const bg = effectiveBackground(document.elementFromPoint(sels[0].left + 1, sels[0].top + 1));
     if (bg && !/^rgba?\(255, 255, 255/.test(bg)) out.style.backgroundColor = bg;
 
@@ -361,7 +413,7 @@
           const r = child.getBoundingClientRect();
           const tag = child.tagName.toUpperCase();
           if (!hit(r)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
-          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r)) {
+          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r) || layered.has(child) || designBlock(child, cs, r)) {
             const area = clipArea(r);
             if (!area || area.width < 2 || area.height < 2) continue;
             const img = document.createElement("img");
@@ -370,9 +422,17 @@
             const alt = child.getAttribute("alt") || child.getAttribute("aria-label") ||
                         (child.querySelector && child.querySelector("annotation")?.textContent) || "";
             if (alt) img.setAttribute("alt", alt.trim());
+            if (cs.float === "left" || cs.float === "right") {   // text wraps around it, as on the page
+              img.setAttribute("align", cs.float);
+              img.setAttribute("style", `float:${cs.float};margin:${cs.marginTop} ${cs.marginRight} ${cs.marginBottom} ${cs.marginLeft}`);
+            }
             into.appendChild(img);
             visuals.push({ node: img, rect: area });
             if (isBlock(cs)) flush();
+            if (!VISUAL.has(tag) && child.innerText && child.innerText.trim()) {   // pictured text still goes in plain text
+              flush();
+              for (const l of child.innerText.split("\n")) { line = l; flush(); }
+            }
             continue;
           }
         }
@@ -532,9 +592,9 @@
       await page.render({ canvasContext: canvas.getContext("2d"), viewport: page.getViewport({ scale, rotation }),
                           background: "white", transform: [1, 0, 0, 1, -box1.x * scale, -box1.y * scale] }).promise;
       pieces.push(await new Promise((r) => canvas.toBlob(r, "image/png")));
-      const lines = await pdfLines(page, pdfRect);
-      texts.push(lines.map((l) => l.text).join("\n"));
-      htmls.push(pdfTextHtml(lines));
+      const rich = await pdfRich(page, pdfRect, { canvas, box1, scale, v1 });
+      texts.push(rich.text);
+      htmls.push(rich.html);
     }
     const png = await stack(pieces, devicePixelRatio);
     const text = texts.filter((t) => t.trim()).join("\n\n");
@@ -547,58 +607,170 @@
     return { png, html, text, summary, save };
   }
 
-  // Text items whose centre lies inside the box, grouped into lines (top to bottom, left to right).
-  async function pdfLines(page, [x1, y1, x2, y2]) {
+  // Rebuilds the text inside a PDF box as formatted HTML, the way PyMuPDF / pdfplumber reconstruct layout:
+  // items -> lines (same baseline) -> paragraphs (wrapped lines joined; split on vertical gaps, size changes
+  // and short lines). Each run keeps its real font family, size, bold/italic (PDF.js font objects) and colour
+  // (read from the rendered glyph pixels, since PDF.js text content has no colour). Paragraphs keep their
+  // indentation, centring and spacing in points.
+  async function pdfRich(page, [x1, y1, x2, y2], raster) {
     const content = await page.getTextContent();
+    const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
     const items = [];
     for (const it of content.items) {
       if (!it.str || !it.transform) continue;
-      const [, , , dy, x, y] = it.transform;
-      const hgt = it.height || Math.abs(dy) || 10;
-      const cx = x + (it.width || 0) / 2, cy = y + hgt / 2;
-      if (cx < x1 || cx > x2 || cy < y1 || cy > y2) continue;
-      items.push({ str: it.str, x, y, w: it.width || 0, h: hgt, bold: isBold(page, it.fontName) });
+      const [a, b, c, d, x, y] = it.transform;
+      const size = Math.hypot(c, d) || it.height || 10;
+      const w = it.width || 0;
+      const cx = x + w / 2, cy = y + size * 0.35;
+      if (cx < x1 || cx > x2 || cy < y1 || cy > y2 || Math.abs(b) > Math.abs(a) * 0.1) continue;   // skip rotated text
+      const font = fontInfo(page, it.fontName, content.styles[it.fontName]);
+      items.push({ str: it.str, x, y, w, size, ...font, color: glyphColor(ctx, raster, x, y - size * 0.2, x + w, y + size * 0.8) });
     }
-    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.min(p.h, q.h) * 0.5 ? q.y - p.y : p.x - q.x));
+    if (!items.length) return { text: "", html: "" };
+
+    // lines: same baseline (within a third of the size), left to right
+    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.min(p.size, q.size) * 0.35 ? q.y - p.y : p.x - q.x));
     const lines = [];
     for (const it of items) {
       const last = lines[lines.length - 1];
-      if (last && Math.abs(last.y - it.y) <= Math.min(last.h, it.h) * 0.5) {
+      if (last && Math.abs(last.y - it.y) <= Math.min(last.first, it.size) * 0.35) {
         const gap = it.x - last.end;
-        const sep = gap > it.h * 0.15 && !/\s$/.test(last.text) && !/^\s/.test(it.str) ? " " : "";
-        last.text += sep + it.str;
-        last.parts.push({ s: sep + it.str, bold: it.bold });
-        last.end = it.x + it.w;
-        last.h = Math.max(last.h, it.h);
+        if (gap > it.size * 0.15 && !/\s$/.test(last.runs[last.runs.length - 1].s) && !/^\s/.test(it.str)) {
+          addRun(last.runs, " ", it);
+        }
+        addRun(last.runs, it.str, it);
+        last.end = Math.max(last.end, it.x + it.w);
       } else {
-        lines.push({ y: it.y, h: it.h, end: it.x + it.w, text: it.str, parts: [{ s: it.str, bold: it.bold }] });
+        lines.push({ y: it.y, x: it.x, end: it.x + it.w, first: it.size, runs: [{ s: it.str, ...styleOf(it) }] });
       }
     }
-    return lines;
-  }
-
-  function isBold(page, id) {                      // font objects are known once the page has rendered
-    try { const f = page.commonObjs.has(id) && page.commonObjs.get(id); return !!(f && (f.bold || f.black)); }
-    catch (e) { return false; }
-  }
-
-  function pdfTextHtml(lines) {
-    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const out = [];
-    let para = [], prev = null;
-    const flushPara = () => {
-      if (para.length) out.push(para.map((l, i) => `<p style="margin:0 0 ${i === para.length - 1 ? ".6em" : "0"}">${l}</p>`).join(""));
-      para = [];
-    };
     for (const l of lines) {
-      if (prev && prev.y - l.y > Math.max(prev.h, l.h) * 1.8) flushPara();
-      const pt = Math.max(7, Math.min(40, Math.round(l.h)));
-      para.push(`<span style="font-size:${pt}pt">` +
-                l.parts.map((p) => (p.bold ? `<b>${esc(p.s)}</b>` : esc(p.s))).join("") + "</span>");
-      prev = l;
+      l.text = l.runs.map((r) => r.s).join("");
+      l.size = mostCommon(l.runs.filter((r) => r.s.trim()).map((r) => [r.size, r.s.length])) || 10;   // a 12pt colon doesn't make a 12pt line
     }
-    flushPara();
-    return `<div style="font-family:Calibri,Arial,sans-serif">${out.join("")}</div>`;
+
+    // paragraphs
+    const left = Math.min(...lines.map((l) => l.x)), right = Math.max(...lines.map((l) => l.end));
+    const width = Math.max(1, right - left);
+    const centred = (l) => {
+      const lm = l.x - x1, rm = x2 - l.end;
+      return l.end - l.x < width * 0.85 && lm > l.size && Math.abs(lm - rm) < Math.max(l.size * 1.5, (x2 - x1) * 0.06);
+    };
+    const paras = [];
+    for (const l of lines) {
+      const p = paras[paras.length - 1];
+      const prev = p && p.lines[p.lines.length - 1];
+      const joins = prev &&
+        prev.y - l.y < Math.max(prev.size, l.size) * 1.45 &&            // normal line spacing
+        Math.abs(prev.size - l.size) < 1 &&                            // same size
+        prev.end > right - Math.max(prev.size * 3, width * 0.12) &&   // previous line ran to the right edge
+        Math.abs(l.x - p.lines[0].x) < prev.size * 2.5 &&              // same left edge (or first-line indent)
+        centred(prev) === centred(l);
+      if (joins) {
+        const lastRun = p.runs[p.runs.length - 1];
+        if (/[A-Za-z]-$/.test(lastRun.s) && /^[a-z]/.test(l.text)) lastRun.s = lastRun.s.slice(0, -1);   // re-join hyphenated words
+        else if (!/\s$/.test(lastRun.s)) p.runs.push({ ...lastRun, s: " " });
+        for (const r of l.runs) mergeRun(p.runs, r);
+        p.lines.push(l);
+      } else {
+        if (p) p.after = Math.max(0, prev.y - l.y - l.size * 1.2);   // extra space below the previous paragraph
+        paras.push({ lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l), after: 0 });
+      }
+    }
+
+    // HTML: the most common family/size/colour go on the wrapper; runs only state differences
+    const common = (key) => mostCommon(paras.flatMap((p) => p.runs.filter((r) => r.s.trim()).map((r) => [r[key], r.s.length])));
+    const base = { family: common("family"), size: common("size"), color: common("color") };
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = paras.map((p) => {
+      const style = [`margin:0 0 ${round1(Math.min(p.after, 36))}pt ${p.centred ? 0 : round1(p.indent)}pt`];
+      if (p.centred) style.push("text-align:center");
+      const body = p.runs.map((r) => {
+        const s = [];
+        if (r.family !== base.family) s.push(`font-family:${cssFamily(r.family)}`);
+        if (r.size !== base.size) s.push(`font-size:${r.size}pt`);
+        if (r.color !== base.color) s.push(`color:${r.color}`);
+        if (r.bold) s.push("font-weight:bold");
+        if (r.italic) s.push("font-style:italic");
+        return s.length ? `<span style="${s.join(";")}">${esc(r.s)}</span>` : esc(r.s);
+      }).join("");
+      return `<p style="${style.join(";")}">${body}</p>`;
+    }).join("");
+    return {
+      text: paras.map((p) => (p.centred ? "" : " ".repeat(Math.round(p.indent / (base.size || 11) * 2))) + p.runs.map((r) => r.s).join("")).join("\n"),
+      // the original column width, so lines wrap at the same words as in the PDF
+      html: `<div style="width:${Math.ceil(width + 2)}pt;max-width:100%;font-family:${cssFamily(base.family)};font-size:${base.size}pt;` +
+            `color:${base.color};line-height:1.15">${html}</div>`,
+    };
+  }
+
+  const round1 = (v) => Math.round(v * 10) / 10;
+  const styleOf = (it) => ({ family: it.family, size: Math.round(it.size * 2) / 2, color: it.color, bold: it.bold, italic: it.italic });
+  const sameStyle = (a, b) => a.family === b.family && a.size === b.size && a.color === b.color && a.bold === b.bold && a.italic === b.italic;
+  function addRun(runs, s, it) { mergeRun(runs, { s, ...styleOf(it) }); }
+  function mergeRun(runs, r) {
+    const last = runs[runs.length - 1];
+    if (last && (sameStyle(last, r) || !r.s.trim())) last.s += r.s; else runs.push({ ...r });
+  }
+  function mostCommon(pairs) {
+    const tally = new Map();
+    for (const [k, n] of pairs) tally.set(k, (tally.get(k) || 0) + n);
+    return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  }
+  const cssFamily = (f) => `'${f}', ${/Times|Georgia|Cambria|Garamond|Roman|Serif|Book/i.test(f) ? "serif" : /Courier|Mono|Consol/i.test(f) ? "monospace" : "sans-serif"}`;
+
+  // Real font family and style. Font objects (with their PostScript name, thanks to fontExtraProperties in
+  // reader.js) are known once the page has rendered.
+  const FAMILY_NAMES = { Helvetica: "Arial", TimesNewRoman: "Times New Roman", Times: "Times New Roman",
+    CourierNew: "Courier New", Courier: "Courier New", ArialNarrow: "Arial Narrow", SegoeUI: "Segoe UI",
+    CalibriLight: "Calibri Light", CambriaMath: "Cambria Math", ComicSansMS: "Comic Sans MS", TrebuchetMS: "Trebuchet MS" };
+  function fontInfo(page, id, style) {
+    let f = null;
+    try { f = page.commonObjs.has(id) ? page.commonObjs.get(id) : null; } catch (e) { /* not loaded */ }
+    const ps = ((f && f.name) || "").replace(/^[A-Z]{6}\+/, "");
+    let fam = ps.split(/[-,]/)[0].replace(/(PSMT|PS|MT)$/, "");
+    if (/^(CM|LM|SF)[A-Z]*\d*$/i.test(fam)) fam = /^(CMMI|CMSY|CMEX)/i.test(fam) ? "Cambria Math" : "Times New Roman";   // TeX fonts
+    fam = FAMILY_NAMES[fam] || fam.replace(/([a-z])([A-Z])/g, "$1 $2");
+    if (!fam) fam = style && /serif/.test(style.fontFamily) && !/sans/.test(style.fontFamily) ? "Times New Roman" : "Arial";
+    const suffix = ps.slice(ps.split(/[-,]/)[0].length);
+    return {
+      family: fam,
+      bold: !!(f && (f.bold || f.black)) || /bold|black|heavy|semibold|demi/i.test(suffix),
+      italic: !!(f && f.italic) || /italic|oblique/i.test(suffix),
+    };
+  }
+
+  // Colour of the glyphs inside a PDF-space rectangle of the rendered box: the background is the most common
+  // colour there, the text colour is the average of the pixels furthest from it.
+  function glyphColor(ctx, { box1, scale, v1, canvas }, px1, py1, px2, py2) {
+    const [ax, ay] = v1.convertToViewportPoint(px1, py1), [bx, by] = v1.convertToViewportPoint(px2, py2);
+    const sx = Math.max(0, Math.floor((Math.min(ax, bx) - box1.x) * scale)), sy = Math.max(0, Math.floor((Math.min(ay, by) - box1.y) * scale));
+    const sw = Math.min(canvas.width - sx, Math.ceil(Math.abs(bx - ax) * scale)), sh = Math.min(canvas.height - sy, Math.ceil(Math.abs(by - ay) * scale));
+    if (sw < 1 || sh < 1) return "#000000";
+    const px = ctx.getImageData(sx, sy, sw, sh).data;
+    const tally = new Map();
+    for (let i = 0; i < px.length; i += 4) {
+      const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+      tally.set(k, (tally.get(k) || 0) + 1);
+    }
+    const bgKey = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const bg = [((bgKey >> 8) & 15) * 16 + 8, ((bgKey >> 4) & 15) * 16 + 8, (bgKey & 15) * 16 + 8];
+    let maxD = 0;
+    const dist = [];
+    for (let i = 0; i < px.length; i += 4) {
+      const dd = Math.abs(px[i] - bg[0]) + Math.abs(px[i + 1] - bg[1]) + Math.abs(px[i + 2] - bg[2]);
+      dist.push(dd);
+      if (dd > maxD) maxD = dd;
+    }
+    if (maxD < 60) return "#000000";
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let j = 0; j < dist.length; j++) {
+      if (dist[j] < maxD * 0.75) continue;
+      r += px[j * 4]; g += px[j * 4 + 1]; b += px[j * 4 + 2]; n++;
+    }
+    const hex = (v) => Math.round(v / n).toString(16).padStart(2, "0");
+    const col = `#${hex(r)}${hex(g)}${hex(b)}`;
+    return /^#[0-3][0-9a-f][0-3][0-9a-f][0-3][0-9a-f]$/.test(col) ? "#000000" : col;   // near-black antialiasing -> black
   }
 
   // A PDF holding only the boxes, one per page: the original vectors and text, cropped (pdf-lib).

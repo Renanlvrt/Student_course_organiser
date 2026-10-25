@@ -173,7 +173,8 @@ def main():
         "click picks the whole table": tb.get("text/plain", "").replace("\r", "") == "a\tb\n1\t2",
         "PDF opens in the reader": True,
         "PDF text exact, bold kept": pt.get("text/plain", "").replace("\r", "") == "Theorem 1 (Diffie-Hellman)\nShared secret g^ab mod p is never sent."
-                                    and "<b>Theorem 1" in pt.get("text/html", ""),
+                                    and "font-weight:bold\">Theorem 1" in pt.get("text/html", "")
+                                    and "font-size:28pt" in pt.get("text/html", ""),
         "PDF image is PNG only": set(pi) == {"image/png"} and pi["image/png"] > 1000,
         "PDF several boxes": pm.get("text/plain", "").replace("\r", "") == "Theorem 1 (Diffie-Hellman)\n\nvector",
         "PDF on disk opens in the reader": local_title == "slides.pdf",

@@ -10,6 +10,7 @@
     options.set("defaultUrl", "");                 // no sample document
     options.set("disablePreferences", true);
     options.set("enableScripting", false);
+    options.set("fontExtraProperties", true);      // real font names, for Alt+L's formatted text
     const app = window.PDFViewerApplication;
     app.initializedPromise.then(() => {
       if (!src) return;
@@ -49,8 +50,10 @@
   // Alt+L in this tab: the service worker cannot inject into extension pages, so it asks us.
   let myTabId = null;
   chrome.tabs.getCurrent((tab) => { myTabId = tab ? tab.id : null; });
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "clip-start" && msg.tabId === myTabId && globalThis.altoClip) globalThis.altoClip.start();
+  chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    if (msg.type !== "clip-start" || msg.tabId !== myTabId || !globalThis.altoClip) return false;
+    globalThis.altoClip.start();
+    reply({ ok: true });
     return false;
   });
 })();
