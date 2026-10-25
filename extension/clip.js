@@ -345,20 +345,25 @@
     const designBlock = (node, cs, r) => {
       const a = clipArea(r);
       if (!a) return false;
-      if (cs.float !== "none" && r.width < vw * 0.6 && node.querySelector("img, svg, canvas, video")) return true;   // floated figure + caption
+      if (cs.float !== "none" && r.width < vw * 0.6 && node.querySelector("img, svg, canvas, video")) return "picture";   // floated figure + caption
       if (r.width * r.height > vw * vh * 0.9 || a.width * a.height < r.width * r.height * 0.6) return false;
       if (r.width < 24 || r.height < 16 || !node.textContent.trim()) return false;
-      if (/url\(|gradient\(/.test(cs.backgroundImage)) return true;
+      if (/url\(|gradient\(/.test(cs.backgroundImage)) return "picture";
       const area = r.width * r.height;
       for (const m of node.querySelectorAll("img, video, canvas, picture, svg")) {
         const mr = m.getBoundingClientRect();
-        if (mr.width * mr.height > area * 0.3) return true;                       // text laid over a big picture
+        if (mr.width * mr.height > area * 0.3) return "picture";                  // text laid over a big picture
       }
       if (/^(inline-)?(flex|grid)$/.test(cs.display)) {
         const kids = [...node.children].map((k) => k.getBoundingClientRect()).filter((k) => k.width > 0 && k.height > 0);
         for (let i = 1; i < kids.length; i++) {
           const p = kids[i - 1], k = kids[i];
-          if (k.left >= p.right - 2 && k.top < p.bottom && k.bottom > p.top) return true;   // side by side
+          if (k.left >= p.right - 2 && k.top < p.bottom && k.bottom > p.top) {   // side by side
+            const pics = [...node.querySelectorAll("img, video, canvas, picture")].some((m) => {
+              const mr = m.getBoundingClientRect(); return mr.width > 64 && mr.height > 64;
+            });
+            return pics ? "picture" : "row";        // text-only rows (menus, key/value grids) stay editable
+          }
         }
       }
       return false;
@@ -413,7 +418,9 @@
           const r = child.getBoundingClientRect();
           const tag = child.tagName.toUpperCase();
           if (!hit(r)) { if (tag === "BR") continue; if (!hasOverflowingKids(cs)) continue; }
-          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r) || layered.has(child) || designBlock(child, cs, r)) {
+          const design = layered.has(child) ? "picture" : designBlock(child, cs, r);
+          if (design === "row") { rowTable(child, into, cs); continue; }
+          if (VISUAL.has(tag) || child.matches(VISUAL_SEL) || iconLike(child, cs, r) || design === "picture") {
             const area = clipArea(r);
             if (!area || area.width < 2 || area.height < 2) continue;
             const img = document.createElement("img");
@@ -438,18 +445,99 @@
         }
         const tag = child.tagName.toUpperCase();
         const block = isBlock(cs) && cs.display !== "table-cell";
-        const outTag = KEEP.has(tag) ? tag : (block ? "DIV" : "SPAN");
+        // headings become paragraphs stating their exact look: OneNote and Word would apply their own heading styles
+        const heading = /^H[1-6]$/.test(tag);
+        const outTag = heading ? "P" : KEEP.has(tag) && tag !== "BLOCKQUOTE" ? tag : (block ? "DIV" : "SPAN");
         const copy = document.createElement(outTag);
         if (tag === "A" && child.href) copy.setAttribute("href", child.href);
         for (const a of ["colspan", "rowspan", "start"]) if (child.hasAttribute(a)) copy.setAttribute(a, child.getAttribute(a));
-        const style = styleDiff(cs, parentCs, block, tag);
+        if (tag === "TABLE") {                     // OneNote takes borders from the attribute, not CSS
+          const cell = child.querySelector("td, th");
+          const ruled = parseFloat(cs.borderTopWidth) > 0 || (cell && parseFloat(getComputedStyle(cell).borderTopWidth) > 0);
+          copy.setAttribute("border", ruled ? "1" : "0");
+          copy.setAttribute("cellspacing", "0");
+        }
+        if (tag === "TD" || tag === "TH") copy.setAttribute("width", Math.round(child.getBoundingClientRect().width));
+        const style = heading ? cellFont(cs, true) : styleDiff(cs, parentCs, block, tag);
         if (style) copy.setAttribute("style", style);
         if (tag === "BR") { into.appendChild(copy); flush(); continue; }
+        // paragraph-level blocks (and whole tables/lists) carry their own indent and the gap above them
+        const leaf = block && !cellDepth && !/^(LI|TD|TH|TR|TBODY|THEAD|TFOOT)$/.test(tag) && !child.closest("li, td, th") &&
+                     (/^(TABLE|UL|OL|DL)$/.test(tag) ||
+                      ![...child.children].some((k) => { const d = getComputedStyle(k).display; return !/^inline/.test(d) && d !== "none" && d !== "contents"; }));
+        const spacerAt = leaf ? into.childNodes.length : -1;
+        if (/^(TABLE|UL|OL|DL)$/.test(tag)) cellDepth++;
         walk(child, copy, cs);
-        if (copy.childNodes.length || tag === "HR") into.appendChild(copy);
+        if (/^(TABLE|UL|OL|DL)$/.test(tag)) cellDepth--;
+        if (copy.childNodes.length || tag === "HR") {
+          into.appendChild(copy);
+          if (leaf) blockDone(child, cs, copy, into, spacerAt, /^(TABLE|UL|OL|DL)$/.test(tag));
+        }
         if (block) flush();
         if (tag === "TD" || tag === "TH") line += "\t";
       }
+    };
+
+    // Side-by-side boxes (flex/grid rows) -> a borderless table, one row per visual row, so they stay editable.
+    const rowTable = (node, into, cs) => {
+      const rows = [];
+      for (const k of node.children) {
+        const kc = getComputedStyle(k);
+        if (kc.display === "none" || kc.visibility === "hidden") continue;
+        const kr = k.getBoundingClientRect();
+        if (!kr.width || !kr.height || !hit(kr)) continue;
+        let row = rows.find((rw) => kr.top < rw.bottom - 2 && kr.bottom > rw.top + 2);
+        if (!row) { row = { top: kr.top, bottom: kr.bottom, cells: [] }; rows.push(row); }
+        row.cells.push({ k, kr });
+        row.bottom = Math.max(row.bottom, kr.bottom);
+      }
+      flush();
+      const table = document.createElement("table");
+      table.setAttribute("border", "0");
+      table.setAttribute("cellspacing", "0");
+      for (const row of rows.sort((a, b) => a.top - b.top)) {
+        const tr = table.insertRow();
+        row.cells.sort((a, b) => a.kr.left - b.kr.left).forEach(({ k, kr }, n) => {
+          const td = tr.insertCell();
+          td.setAttribute("width", Math.round(kr.width));
+          td.setAttribute("style", cellFont(getComputedStyle(k)) + ";vertical-align:top");
+          cellDepth++;
+          walk(k.tagName === "LI" ? k : { childNodes: [k] }, td, cs);   // a list item's content, without a stray bullet
+          cellDepth--;
+          if (n < row.cells.length - 1) line += "\t";
+        });
+        flush();
+      }
+      if (table.rows.length) {
+        const at = into.childNodes.length;
+        into.appendChild(table);
+        blockDone(node, cs, table, into, at, true);
+      }
+    };
+    // Layout in the form OneNote keeps: each paragraph-level block gets its indent (and centring) as its own
+    // margin-left - OneNote ignores text-align:center and container margins - and vertical gaps become sized
+    // empty paragraphs, collapsed like CSS margins (the larger of the two wins).
+    let cellDepth = 0, pendingGap = 0, blocksSeen = 0;
+    const placed = [];                             // {el: output element, left, right} - indents fixed up at the end
+    const blockDone = (src, cs, el, into, at, whole) => {
+      const gap = Math.max(pendingGap, parseFloat(cs.marginTop) || 0);
+      if (blocksSeen++ && spacerHtml(gap)) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = spacerHtml(gap);
+        into.insertBefore(tmp.firstChild, into.childNodes[at] || null);
+      }
+      pendingGap = parseFloat(cs.marginBottom) || 0;
+      const r = src.getBoundingClientRect();
+      let left = r.left + (whole ? 0 : parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth));
+      let right = 0;
+      if (!whole && cs.textAlign === "center") {   // centre by indenting to the middle (OneNote drops text-align:center)
+        const range = document.createRange();
+        range.selectNodeContents(src);
+        const inner = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        right = Math.max(0, (inner - range.getBoundingClientRect().width) / 2);
+        left += right;
+      }
+      placed.push({ el, left, right });
     };
 
     const text = (node, into) => {
@@ -482,6 +570,12 @@
 
     walk(document.body, out, base);
     flush();
+    // indents relative to the leftmost block, as margins on each block (OneNote turns them into indent levels)
+    const minLeft = Math.min(...placed.map((p) => p.left));
+    for (const p of placed) {
+      const margin = `margin:0 ${Math.round(p.right * 0.75)}pt 0 ${Math.round((p.left - minLeft) * 0.75)}pt`;   // the 4-value form OneNote reads
+      p.el.setAttribute("style", [p.el.getAttribute("style"), margin].filter(Boolean).join(";"));
+    }
     return { root: out, visuals, text: lines.join("\n") };
   }
 
@@ -501,13 +595,17 @@
         parts.push(`padding-left:${cs.paddingLeft}`);
       }
     }
-    if ((tag === "TD" || tag === "TH" || tag === "TABLE") && parseFloat(cs.borderTopWidth) > 0) {
-      parts.push(`border:${cs.borderTopWidth} solid ${cs.borderTopColor}`, `padding:${cs.padding || "2px 6px"}`);
-    }
+    if (tag === "TD" || tag === "TH") parts.push(cellFont(cs), "vertical-align:top");
     if (tag === "TABLE") parts.push("border-collapse:collapse");
     return parts.join(";");
   }
 
+  // Vertical space as an empty paragraph of the right size (OneNote drops paragraph margins).
+  const spacerHtml = (px) => (px * 0.75 >= 3 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(px * 0.75 / 1.15))}pt">&nbsp;</p>` : "");
+  // OneNote resets the font inside table cells, so cells state theirs in full.
+  const cellFont = (cs, explicit) => `font-family:${cs.fontFamily};font-size:${cs.fontSize};color:${cs.color}` +
+    (parseInt(cs.fontWeight, 10) >= 600 ? ";font-weight:bold" : explicit ? ";font-weight:normal" : "") +
+    (cs.fontStyle === "italic" ? ";font-style:italic" : "");
   const isBlock = (cs) => !/^inline/.test(cs.display) && cs.display !== "contents";
   const hasOverflowingKids = (cs) => cs.overflow === "visible" && cs.position !== "static";
   function iconLike(node, cs, r) {                 // background-image pictures with no text of their own
@@ -617,7 +715,7 @@
     const ctx = raster.canvas.getContext("2d", { willReadFrequently: true });
     const items = [];
     for (const it of content.items) {
-      if (!it.str || !it.transform) continue;
+      if (!it.str || !it.str.trim() || !it.transform) continue;   // PDF.js fills gaps with wide space items; spacing comes from positions
       const [a, b, c, d, x, y] = it.transform;
       const size = Math.hypot(c, d) || it.height || 10;
       const w = it.width || 0;
@@ -634,80 +732,176 @@
     for (const it of items) {
       const last = lines[lines.length - 1];
       if (last && Math.abs(last.y - it.y) <= Math.min(last.first, it.size) * 0.35) {
-        const gap = it.x - last.end;
-        if (gap > it.size * 0.15 && !/\s$/.test(last.runs[last.runs.length - 1].s) && !/^\s/.test(it.str)) {
-          addRun(last.runs, " ", it);
-        }
-        addRun(last.runs, it.str, it);
+        last.items.push(it);
         last.end = Math.max(last.end, it.x + it.w);
       } else {
-        lines.push({ y: it.y, x: it.x, end: it.x + it.w, first: it.size, runs: [{ s: it.str, ...styleOf(it) }] });
+        lines.push({ y: it.y, x: it.x, end: it.x + it.w, first: it.size, items: [it] });
       }
     }
     for (const l of lines) {
+      l.runs = runsOf(l.items);
       l.text = l.runs.map((r) => r.s).join("");
       l.size = mostCommon(l.runs.filter((r) => r.s.trim()).map((r) => [r.size, r.s.length])) || 10;   // a 12pt colon doesn't make a 12pt line
+      // segments: pieces of the line separated by a wide gap (table cells, tab stops)
+      l.segs = [];
+      for (const it of l.items) {
+        const s = l.segs[l.segs.length - 1];
+        if (s && it.x - s.end < Math.max(l.size * 1.2, 6)) { s.items.push(it); s.end = Math.max(s.end, it.x + it.w); }
+        else l.segs.push({ x: it.x, end: it.x + it.w, items: [it] });
+      }
     }
 
-    // paragraphs
     const left = Math.min(...lines.map((l) => l.x)), right = Math.max(...lines.map((l) => l.end));
     const width = Math.max(1, right - left);
     const centred = (l) => {
       const lm = l.x - x1, rm = x2 - l.end;
       return l.end - l.x < width * 0.85 && lm > l.size && Math.abs(lm - rm) < Math.max(l.size * 1.5, (x2 - x1) * 0.06);
     };
-    const paras = [];
-    for (const l of lines) {
-      const p = paras[paras.length - 1];
-      const prev = p && p.lines[p.lines.length - 1];
+
+    // tables: two or more consecutive lines whose segments start at the same column positions
+    const blocks = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = tableAt(lines, i);
+      if (t) { blocks.push(t); i = t.last; continue; }
+      const l = lines[i];
+      const b = blocks[blocks.length - 1];
+      const prev = b && b.kind === "para" && b.lines[b.lines.length - 1];
       const joins = prev &&
         prev.y - l.y < Math.max(prev.size, l.size) * 1.45 &&            // normal line spacing
         Math.abs(prev.size - l.size) < 1 &&                            // same size
         prev.end > right - Math.max(prev.size * 3, width * 0.12) &&   // previous line ran to the right edge
-        Math.abs(l.x - p.lines[0].x) < prev.size * 2.5 &&              // same left edge (or first-line indent)
+        Math.abs(l.x - b.lines[0].x) < prev.size * 2.5 &&              // same left edge (or first-line indent)
         centred(prev) === centred(l);
       if (joins) {
-        const lastRun = p.runs[p.runs.length - 1];
+        const lastRun = b.runs[b.runs.length - 1];
         if (/[A-Za-z]-$/.test(lastRun.s) && /^[a-z]/.test(l.text)) lastRun.s = lastRun.s.slice(0, -1);   // re-join hyphenated words
-        else if (!/\s$/.test(lastRun.s)) p.runs.push({ ...lastRun, s: " " });
-        for (const r of l.runs) mergeRun(p.runs, r);
-        p.lines.push(l);
+        else if (!/\s$/.test(lastRun.s)) b.runs.push({ ...lastRun, s: " " });
+        for (const r of l.runs) mergeRun(b.runs, r);
+        b.lines.push(l);
       } else {
-        if (p) p.after = Math.max(0, prev.y - l.y - l.size * 1.2);   // extra space below the previous paragraph
-        paras.push({ lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l), after: 0 });
+        blocks.push({ kind: "para", lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l) });
       }
     }
+    for (let i = 0; i + 1 < blocks.length; i++) {                     // space below each block, from the baselines
+      const a = blocks[i], b = blocks[i + 1];
+      const lastA = a.kind === "para" ? a.lines[a.lines.length - 1] : a.rows[a.rows.length - 1].line;
+      const firstB = b.kind === "para" ? b.lines[0] : b.rows[0].line;
+      a.after = Math.max(0, lastA.y - firstB.y - firstB.size * 1.25);
+    }
+    for (const b of blocks) if (b.kind === "table") b.ruled = isRuled(ctx, raster, b);
 
-    // HTML: the most common family/size/colour go on the wrapper; runs only state differences
-    const common = (key) => mostCommon(paras.flatMap((p) => p.runs.filter((r) => r.s.trim()).map((r) => [r[key], r.s.length])));
+    // HTML in the subset OneNote keeps (checked by pasting into OneNote): fonts, sizes, colours, bold/italic,
+    // margin-left indents and tables. It drops centring, margins and line spacing, so centred lines are indented
+    // to the middle (margin-right too, which centres them in Word) and gaps become sized empty paragraphs.
+    const all = blocks.flatMap((b) => (b.kind === "para" ? b.runs : b.rows.flatMap((r) => r.cells.flat())));
+    const common = (key) => mostCommon(all.filter((r) => r.s.trim()).map((r) => [r[key], r.s.length]));
     const base = { family: common("family"), size: common("size"), color: common("color") };
     const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const html = paras.map((p) => {
-      const style = [`margin:0 0 ${round1(Math.min(p.after, 36))}pt ${p.centred ? 0 : round1(p.indent)}pt`];
-      if (p.centred) style.push("text-align:center");
-      const body = p.runs.map((r) => {
-        const s = [];
-        if (r.family !== base.family) s.push(`font-family:${cssFamily(r.family)}`);
-        if (r.size !== base.size) s.push(`font-size:${r.size}pt`);
-        if (r.color !== base.color) s.push(`color:${r.color}`);
-        if (r.bold) s.push("font-weight:bold");
-        if (r.italic) s.push("font-style:italic");
-        return s.length ? `<span style="${s.join(";")}">${esc(r.s)}</span>` : esc(r.s);
-      }).join("");
-      return `<p style="${style.join(";")}">${body}</p>`;
+    const span = (r, full) => {
+      const s = [];
+      if (full || r.family !== base.family) s.push(`font-family:${cssFamily(r.family)}`);
+      if (full || r.size !== base.size) s.push(`font-size:${r.size}pt`);
+      if (full || r.color !== base.color) s.push(`color:${r.color}`);
+      if (r.bold) s.push("font-weight:bold");
+      if (r.italic) s.push("font-style:italic");
+      return s.length ? `<span style="${s.join(";")}">${esc(r.s)}</span>` : esc(r.s);
+    };
+    const spacer = (gap) => (gap >= 2.5 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(gap / 1.15))}pt">&nbsp;</p>` : "");
+    const html = blocks.map((b) => {
+      if (b.kind === "table") {
+        const colW = b.anchors.map((x, k) => ((b.anchors[k + 1] ?? b.right) - x) * 4 / 3);   // pt -> px
+        const rows = b.rows.map((r) => "<tr>" + r.cells.map((cell, k) =>
+          `<td width="${Math.round(colW[k])}" style="width:${Math.round(colW[k])}px;vertical-align:top;padding:1pt 4pt">` +
+          `${cell.map((x) => span(x, true)).join("") || "&nbsp;"}</td>`).join("") + "</tr>").join("");
+        return `<table border="${b.ruled ? 1 : 0}" cellspacing="0" style="border-collapse:collapse;margin:0">${rows}</table>` + spacer(b.after);
+      }
+      const lineW = Math.max(...b.lines.map((l) => l.end - l.x));
+      const pad = b.centred ? Math.max(0, (x2 - x1 - lineW) / 2 - (left - x1)) : b.indent;
+      const style = [`margin:0 ${b.centred ? round1(pad) : 0}pt 0 ${round1(pad)}pt`];
+      if (b.centred) style.push("text-align:center");
+      return `<p style="${style.join(";")}">${b.runs.map((r) => span(r)).join("")}</p>` + spacer(b.after);
     }).join("");
+    const text = blocks.map((b) => (b.kind === "table"
+      ? b.rows.map((r) => r.cells.map((c) => c.map((x) => x.s).join("")).join("\t")).join("\n")
+      : (b.centred ? "" : " ".repeat(Math.round(b.indent / (base.size || 11) * 2))) + b.runs.map((r) => r.s).join(""))).join("\n");
     return {
-      text: paras.map((p) => (p.centred ? "" : " ".repeat(Math.round(p.indent / (base.size || 11) * 2))) + p.runs.map((r) => r.s).join("")).join("\n"),
-      // the original column width, so lines wrap at the same words as in the PDF
+      text,
+      // the original column width (Word), so lines wrap at the same words as in the PDF
       html: `<div style="width:${Math.ceil(width + 2)}pt;max-width:100%;font-family:${cssFamily(base.family)};font-size:${base.size}pt;` +
             `color:${base.color};line-height:1.15">${html}</div>`,
     };
   }
 
+  function runsOf(items) {
+    const runs = [];
+    let end = null;
+    for (const it of items) {
+      if (end !== null && it.x - end > it.size * 0.15 && runs.length && !/\s$/.test(runs[runs.length - 1].s) && !/^\s/.test(it.str)) {
+        mergeRun(runs, { s: " ", ...styleOf(it) });
+      }
+      mergeRun(runs, { s: it.str, ...styleOf(it) });
+      end = it.x + it.w;
+    }
+    return runs;
+  }
+
+  // A table starting at line i: consecutive lines (normal spacing) with 2+ segments whose starts line up.
+  function tableAt(lines, i) {
+    const rows = [];
+    for (let j = i; j < lines.length; j++) {
+      const l = lines[j];
+      if (l.segs.length < 2) break;
+      if (rows.length && lines[j - 1].y - l.y > Math.max(l.size, lines[j - 1].size) * 3) break;
+      rows.push(l);
+    }
+    if (rows.length < 2) return null;
+    // column anchors: segment starts seen on at least two rows
+    const tol = Math.max(...rows.map((r) => r.size)) * 0.8;
+    const starts = rows.flatMap((r) => r.segs.map((s) => s.x)).sort((a, b) => a - b);
+    const cols = [];
+    for (const x of starts) {
+      const c = cols[cols.length - 1];
+      if (c && x - c.max <= tol) { c.max = x; c.n++; } else cols.push({ min: x, max: x, n: 1 });
+    }
+    const anchors = cols.filter((c) => c.n >= 2).map((c) => c.min);
+    if (anchors.length < 2) return null;
+    const aligned = rows.filter((r) => r.segs.every((s) => anchors.some((a) => Math.abs(s.x - a) <= tol) || s.x > anchors[anchors.length - 1]));
+    if (aligned.length < rows.length * 0.75) return null;
+    const colOf = (x) => { let k = 0; anchors.forEach((a, n) => { if (x >= a - tol) k = n; }); return k; };
+    return {
+      kind: "table", last: i + rows.length - 1, anchors,
+      right: Math.max(...rows.map((r) => r.end)) + tol,
+      rows: rows.map((r) => {
+        const cells = anchors.map(() => []);
+        for (const s of r.segs) for (const run of runsOf(s.items)) mergeRun(cells[colOf(s.x)], run);
+        return { line: r, cells, top: r.y + r.size, bottom: r.y - r.size * 0.3 };
+      }),
+    };
+  }
+
+  // Does the rendered table have ruling lines? Look for a long dark horizontal line between its first two rows.
+  function isRuled(ctx, { box1, scale, v1, canvas }, table) {
+    if (table.rows.length < 2) return false;
+    const [r0, r1] = table.rows;
+    const ys = [];
+    for (let k = 1; k < 8; k++) ys.push(r0.bottom - (r0.bottom - r1.top) * (k / 8));
+    const xa = Math.min(...table.rows.map((r) => r.line.x)), xb = Math.max(...table.rows.map((r) => r.line.end));
+    for (const py of ys) {
+      const [ax, ay] = v1.convertToViewportPoint(xa, py), [bx] = v1.convertToViewportPoint(xb, py);
+      const sx = Math.max(0, Math.floor((Math.min(ax, bx) - box1.x) * scale)), sy = Math.floor((ay - box1.y) * scale);
+      const sw = Math.min(canvas.width - sx, Math.ceil(Math.abs(bx - ax) * scale));
+      if (sy < 0 || sy >= canvas.height || sw < 10) continue;
+      const px = ctx.getImageData(sx, sy, sw, 1).data;
+      let dark = 0;
+      for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] < 600) dark++;
+      if (dark > sw * 0.6) return true;
+    }
+    return false;
+  }
+
   const round1 = (v) => Math.round(v * 10) / 10;
   const styleOf = (it) => ({ family: it.family, size: Math.round(it.size * 2) / 2, color: it.color, bold: it.bold, italic: it.italic });
   const sameStyle = (a, b) => a.family === b.family && a.size === b.size && a.color === b.color && a.bold === b.bold && a.italic === b.italic;
-  function addRun(runs, s, it) { mergeRun(runs, { s, ...styleOf(it) }); }
   function mergeRun(runs, r) {
     const last = runs[runs.length - 1];
     if (last && (sameStyle(last, r) || !r.s.trim())) last.s += r.s; else runs.push({ ...r });
