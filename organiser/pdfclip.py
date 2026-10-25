@@ -212,6 +212,9 @@ def _esc(s):
 
 
 def _span_html(run, base, full=False):
+    if run.get("href"):                            # a link in the PDF stays a clickable link
+        inner = _span_html({**run, "href": None}, base, full)
+        return f'<a href="{_esc(run["href"])}">{inner}</a>'
     st = []
     if full or run["family"] != base["family"]:
         st.append(f"font-family:{_css_family(run['family'])}")
@@ -227,7 +230,7 @@ def _span_html(run, base, full=False):
 
 
 def _merge(runs, run):
-    keys = ("family", "size", "color", "bold", "italic")
+    keys = ("family", "size", "color", "bold", "italic", "href")
     if runs and (all(runs[-1][k] == run[k] for k in keys) or not run["s"].strip()):
         runs[-1]["s"] += run["s"]
     else:
@@ -247,6 +250,8 @@ def rich(page, rect):
     except Exception:
         log.debug("find_tables failed", exc_info=True)
     in_table = lambda bb: any(fitz.Rect(t.bbox).contains(fitz.Rect(bb).tl + (1, 1)) for t in tables)
+    links = [(fitz.Rect(l["from"]), l["uri"]) for l in page.get_links() if l.get("uri")]
+    href = lambda bb: next((u for r, u in links if r.contains((fitz.Rect(bb).tl + fitz.Rect(bb).br) / 2)), None)
 
     lines = []
     for blk in page.get_text("dict", clip=rect)["blocks"]:
@@ -260,7 +265,7 @@ def rich(page, rect):
                 continue
             runs = []
             for s in spans:
-                _merge(runs, {"s": s["text"], **_style(s)})
+                _merge(runs, {"s": s["text"], **_style(s), "href": href(s["bbox"])})
             size = max(((r["size"], len(r["s"])) for r in runs if r["s"].strip()), key=lambda p: p[1])[0]
             lines.append({"bbox": fitz.Rect(ln["bbox"]), "runs": runs, "size": size,
                           "text": "".join(r["s"] for r in runs)})
@@ -292,7 +297,7 @@ def rich(page, rect):
             if re.search(r"[A-Za-z]-$", last["s"]) and re.match(r"[a-z]", l["text"]):
                 last["s"] = last["s"][:-1]
             elif not last["s"].endswith(" "):
-                p["runs"].append({**last, "s": " "})
+                p["runs"].append({**last, "s": " ", "href": None})
             for r in l["runs"]:
                 _merge(p["runs"], r)
             p["lines"].append(l)
@@ -332,7 +337,7 @@ def rich(page, rect):
                                 _merge(runs, {**runs[-1], "s": " "})
                             for s in ln["spans"]:
                                 if s["text"]:
-                                    _merge(runs, {"s": s["text"], **_style(s)})
+                                    _merge(runs, {"s": s["text"], **_style(s), "href": href(s["bbox"])})
                     w = round(cr.width * 4 / 3)
                     body = "".join(_span_html(r, base, full=True) for r in runs) or "&nbsp;"
                     cells_html.append(f'<td width="{w}" style="width:{w}px;vertical-align:top;padding:1pt 4pt">{body}</td>')

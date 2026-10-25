@@ -6,3 +6,11 @@ keyboard>=0.13.5
 pystray>=0.19
 Pillow>=10.0
 google-genai>=1.0
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
+winrt-Windows.Foundation==3.2.1
+opencv-python>=4.8
+numpy>=1.26
+pywin32>=306

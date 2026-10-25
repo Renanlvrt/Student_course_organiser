@@ -63,9 +63,9 @@ class App:
         except Exception:
             log.exception("Could not register hotkey %s", self.cfg.hotkey)
             self.toast("Hotkey problem", f"Could not register {self.cfg.hotkey}; use the tray icon.")
-        try:                                       # Alt+L in desktop PDF viewers (only while one is in front)
+        try:                                       # Alt+L in every app but Chrome (the extension does Chrome)
             from .desktop_clip import ForegroundHotkey
-            self.pdf_hotkey = ForegroundHotkey(lambda hwnd, title: self.uiq.put(("desktop_clip", hwnd, title)))
+            self.pdf_hotkey = ForegroundHotkey(lambda hwnd, title, exe: self.uiq.put(("desktop_clip", hwnd, title, exe)))
             self.pdf_hotkey.start()
         except Exception:
             log.exception("Could not start Alt+L for PDF viewers")
@@ -110,7 +110,7 @@ class App:
             msg[1]()
         elif kind == "desktop_clip":
             from .desktop_clip import ClipOverlay
-            ClipOverlay(self, msg[1], msg[2])
+            ClipOverlay(self, msg[1], msg[2], msg[3])
         elif kind == "fix_result":
             entry_id, res, changes = msg[1], msg[2], msg[3]
             if res == "need_part":

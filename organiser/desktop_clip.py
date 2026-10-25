@@ -1,9 +1,9 @@
-"""Alt+L outside Chrome, in desktop PDF viewers (Acrobat, Foxit, SumatraPDF...).
+"""Alt+L outside Chrome, in every desktop app.
 
-Alt+L is registered with RegisterHotKey only while one of those viewers is the foreground window (a
-SetWinEventHook on foreground changes registers / unregisters it), so Alt+L keeps reaching Chrome and every other
-app untouched, and no keyboard hook is needed. The overlay is a frozen screenshot of the viewer's monitor where
-boxes are drawn like in the extension; pdfclip turns them into formatted text from the PDF itself.
+Alt+L is registered with RegisterHotKey whenever the foreground window is not Chrome (a SetWinEventHook on
+foreground changes registers / unregisters it), so in Chrome the extension keeps handling it, and no keyboard hook
+is needed. The overlay is a frozen screenshot of the app's monitor where boxes are drawn like in the extension.
+Text comes from the PDF itself in PDF viewers (pdfclip) and from Windows OCR everywhere else (ocrclip).
 """
 import ctypes
 import ctypes.wintypes as W
@@ -17,6 +17,7 @@ log = logging.getLogger("organiser.desktop_clip")
 
 PDF_APPS = {"acrobat.exe", "acrord32.exe", "foxitpdfreader.exe", "foxitreader.exe", "foxitphantompdf.exe",
             "foxitpdfeditor.exe", "sumatrapdf.exe", "pdfxedit.exe", "pdfxcview.exe", "nitropdf.exe"}
+BROWSER_APPS = {"chrome.exe"}       # the extension handles Alt+L there
 HOTKEY_ID = 0xA17                   # Alt+O uses id 1
 MOD_ALT, MOD_NOREPEAT, VK_L = 0x0001, 0x4000, 0x4C
 WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
@@ -50,20 +51,23 @@ def title_of(hwnd):
 
 
 class ForegroundHotkey:
-    """Alt+L while a PDF viewer is in front; calls on_hotkey(hwnd, title) on that thread."""
+    """Alt+L while any app but Chrome is in front; calls on_hotkey(hwnd, title, exe) on that thread."""
 
     def __init__(self, on_hotkey):
         self.on_hotkey = on_hotkey
         self._tid = None
         self._registered = False
         self._fg = None
+        self._exe = ""
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True, name="pdf-hotkey").start()
 
     def _update(self, hwnd):
         self._fg = hwnd
-        want = bool(hwnd) and exe_of(hwnd) in PDF_APPS
+        exe = exe_of(hwnd) if hwnd else ""
+        want = bool(exe) and exe not in BROWSER_APPS and exe not in ("pythonw.exe", "python.exe")
+        self._exe = exe
         if want and not self._registered:
             self._registered = bool(user32.RegisterHotKey(None, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_L))
             if not self._registered:
@@ -83,7 +87,7 @@ class ForegroundHotkey:
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID and self._fg:
                     try:
-                        self.on_hotkey(self._fg, title_of(self._fg))
+                        self.on_hotkey(self._fg, title_of(self._fg), self._exe)
                     except Exception:
                         log.exception("Alt+L callback failed")
         finally:
@@ -123,9 +127,9 @@ def stack(images, gap=12):
 class ClipOverlay:
     """Frozen screenshot of the viewer's monitor; drag boxes (Shift = several), Enter/release copies, Esc cancels."""
 
-    def __init__(self, app, hwnd, title):
+    def __init__(self, app, hwnd, title, exe=""):
         import tkinter as tk
-        self.app, self.title = app, title
+        self.app, self.title, self.exe = app, title, exe
         self.mode_file = app.cfg.data_dir / "clip_mode.json"
         try:
             self.mode = json.loads(self.mode_file.read_text())["mode"]
@@ -240,40 +244,42 @@ class ClipOverlay:
         boxes, shot, mode, title = sorted(self.boxes, key=lambda b: (b[1], b[0])), self.shot, self.mode, self.title
         self.close()
         dirs = [self.app.cfg.root_folder, self.app.cfg.downloads_folder]
-        threading.Thread(target=self._work, args=(shot, boxes, mode, title, dirs), daemon=True).start()
+        args = (shot, boxes, mode, title, dirs, self.exe, getattr(self.app, "scale", 1.0))
+        threading.Thread(target=self._work, args=args, daemon=True).start()
 
-    def _work(self, shot, boxes, mode, title, dirs):
+    def _work(self, shot, boxes, mode, title, dirs, exe, scale):
         try:
-            msg = process(shot, boxes, mode, title, dirs)
+            msg = process(shot, boxes, mode, title, dirs, exe, scale)
             self.app.toast("Alt+L", msg)
         except Exception as e:
             log.exception("desktop clip failed")
             self.app.toast("Alt+L", f"Couldn't copy: {e}")
 
 
-def process(shot, boxes, mode, title, search_dirs=()):
+def process(shot, boxes, mode, title, search_dirs=(), exe="", dpi_scale=1.0):
     """Clipboard content for the boxes; returns the confirmation message."""
     import fitz
-    from . import pdfclip
+    from . import ocrclip, pdfclip
     image = stack([shot.crop(b) for b in boxes])
     if mode == "image":
         pdfclip.set_clipboard(image=image)
         return "Copied the exact image · Ctrl+V"
-    pdf = pdfclip.find_open_pdf(title, search_dirs)
-    if not pdf:
-        pdfclip.set_clipboard(image=image)
-        return "Copied the exact image (couldn't tell which PDF file is open)"
-    doc = fitz.open(str(pdf))
-    htmls, texts, pages = [], [], []
+    htmls, texts, sources = [], [], []
+    pdf = pdfclip.find_open_pdf(title, search_dirs) if (exe in PDF_APPS or pdfclip.pdf_name_from_title(title)) else None
+    doc = fitz.open(str(pdf)) if pdf else None
     for b in boxes:
-        m = pdfclip.locate(pdf, shot, b)
-        if not m:
-            pdfclip.set_clipboard(image=image)
-            return "Copied the exact image (couldn't line the box up with the PDF)"
-        html, text = pdfclip.rich(doc[m.page], m.rect)
+        m = pdfclip.locate(pdf, shot, b) if doc else None
+        if m:                                      # text straight from the PDF: exact fonts, links, tables
+            html, text = pdfclip.rich(doc[m.page], m.rect)
+            sources.append(f"page {m.page + 1}")
+        else:                                      # any other app (or a box we couldn't line up): read the screen
+            html, text = ocrclip.screen_rich(shot.crop(b), dpi_scale)
+            sources.append("screen")
         htmls.append(html)
         texts.append(text)
-        pages.append(m.page + 1)
+    if not any(t.strip() for t in texts):
+        pdfclip.set_clipboard(image=image)
+        return "No text found there, so the exact image was copied"
     pdfclip.set_clipboard(html="".join(htmls), text="\n\n".join(t for t in texts if t), image=image)
-    where = f"page {pages[0]}" if len(set(pages)) == 1 else "pages " + ", ".join(map(str, sorted(set(pages))))
-    return f"Copied text from {where} · Ctrl+V"
+    pages = sorted({s for s in sources if s != "screen"})
+    return f"Copied text from {', '.join(pages)} · Ctrl+V" if pages else "Copied the text · Ctrl+V"
