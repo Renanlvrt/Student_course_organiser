@@ -199,7 +199,7 @@
         if (r && r.file) {                          // named so the organiser knows its type: "Exam notes.pdf"
           const named = /\.[a-z0-9]{2,5}$/i.test(r.fileName || "") ? r.fileName : `${(k.text || r.fileName || "file").replace(/[<>:"/\|?*]/g, "_")}${r.ext || ""}`;
           mine.push({ key: `${courseId}:${r.url}`, url: r.url, fileName: named, ctx: linkCtx({ ...k, linkText: k.text }) });
-        } else skipped.push({ ...k, section: shown });
+        } else skipped.push({ ...k, section: shown, ctx: linkCtx({ ...k, linkText: k.text }) });
       });
       // Words written in the page (instructions, links to repositories...) but no file: keep the page itself.
       const words = body.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
@@ -211,7 +211,10 @@
         page = true;
       }
       files.push(...mine);
-      if (!junk || mine.length) scanned.push({ title: shown, path: [...chain].reverse().join(" › "), files: mine.length, page, kind: handler.replace(/^resource\/x-bb-/, "") });
+      // An item with a link but nothing downloaded can still be added by hand in the popup.
+      const link = !mine.length && (extUrl || (notFiles[0] && notFiles[0].href));
+      if (!junk || mine.length) scanned.push({ title: shown, path: [...chain].reverse().join(" › "), files: mine.length, page,
+        kind: handler.replace(/^resource\/x-bb-/, ""), add: link ? { href: link, text: title, ctx: { ...ctx, link_text: title } } : null });
     }
 
     // Several items at a time: each needs its details, children and attachments.

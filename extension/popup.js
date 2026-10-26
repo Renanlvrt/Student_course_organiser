@@ -90,21 +90,58 @@ async function scan() {
   } catch (e) { /* app not running */ }
   found = res.files.filter((f) => !done[f.key] && !have.has((f.fileName || "").toLowerCase()));
   const skipped = res.files.length - found.length;
+  const addBtn = (where, n, k) => k && (k.href || (k.add && k.add.href))
+    ? `<button class="add" data-where="${where}" data-n="${n}" title="Add to the downloads">+</button>` : "";
   $("result").innerHTML = `
     <div class="muted" style="margin-top:8px">${res.files.length} file(s) found · <b style="color:var(--fg)">${found.length} new</b>${skipped ? ` · ${skipped} already downloaded` : ""}</div>
-    <ul>${found.slice(0, 60).map((f) => `<li style="cursor:default"><span>${esc(f.fileName || f.ctx.link_text || "file")}</span><span class="n">${esc(f.ctx.item_title || f.ctx.chain[0] || "")}</span></li>`).join("")}</ul>
-    <button id="go" ${found.length ? "" : "disabled"}>Download ${found.length} new file(s)</button>
+    <ul id="found"></ul>
+    <button id="go"></button>
     ${(res.scanned || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.scanned.length} item(s) checked</summary>
-      <ul>${res.scanned.map((k) => `<li style="cursor:default"><span>${esc(k.title)}</span><span class="n">${k.page ? "page saved" : k.files ? `${k.files} file(s)` : esc(k.kind || "")}</span></li>`).join("")}</ul></details>` : ""}
+      <ul>${res.scanned.map((k, n) => `<li style="cursor:default"><span>${esc(k.title)}</span><span class="n">${k.page ? "page saved" : k.files ? `${k.files} file(s)` : esc(k.kind || "")}</span>${addBtn("scanned", n, k)}</li>`).join("")}</ul></details>` : ""}
     ${(res.skipped || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.skipped.length} web link(s) skipped (Colab, blogs, web pages, not files)</summary>
-      <ul>${res.skipped.slice(0, 40).map((k) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span></li>`).join("")}</ul></details>` : ""}`;
-  $("go") && $("go").addEventListener("click", async () => {
+      <ul>${res.skipped.slice(0, 40).map((k, n) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span>${addBtn("skipped", n, k)}</li>`).join("")}</ul></details>` : ""}`;
+  const renderFound = () => {
+    $("found").innerHTML = found.slice(0, 80).map((f) => `<li style="cursor:default"><span>${esc(f.fileName || f.ctx.link_text || "file")}</span><span class="n">${esc(f.ctx.item_title || f.ctx.chain[0] || "")}</span></li>`).join("");
+    $("go").disabled = !found.length;
+    $("go").textContent = `Download ${found.length} new file(s)`;
+  };
+  renderFound();
+  for (const b of document.querySelectorAll("button.add")) {
+    b.addEventListener("click", () => {
+      const k = res[b.dataset.where][+b.dataset.n];
+      const f = linkDownload(k.add || k);
+      if (!found.some((x) => x.key === f.key)) found.push(f);
+      b.disabled = true;
+      b.textContent = "✓";
+      renderFound();
+    });
+  }
+  $("go").addEventListener("click", async () => {
     $("go").disabled = true;
     // Sheets and slides first, notebooks/code last, so practical folders exist when code arrives.
     const isCode = (f) => /\.(ipynb|py|zip)(\?|$)/i.test(f.fileName || f.url);
     const ordered = found.filter((f) => !isCode(f)).concat(found.filter(isCode));
     await chrome.runtime.sendMessage({ type: "startQueue", files: ordered });
   });
+}
+
+// A web link added by hand: a GitHub/GitLab repository comes as a .zip of its code, any other page as a
+// small .html file that opens it (the organiser files both next to the rest of the practical).
+function linkDownload(k) {
+  const url = new URL(k.href, tab.url).href;
+  const ctx = { ...(k.ctx || {}), source: "manual-add" };
+  const safe = (s) => (s || "link").replace(/[<>:"/\|?*\x00-\x1f]/g, "_").trim().slice(0, 120);
+  let m = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?(?:\/tree\/([^/#?]+))?\/?(?:[#?].*)?$/);
+  if (m) return { key: `${info.courseId}:add:${url}`, url: `https://github.com/${m[1]}/${m[2]}/archive/${m[3] || "HEAD"}.zip`,
+                  fileName: `${safe(m[2])}.zip`, ctx };
+  m = url.match(/^https:\/\/gitlab\.com\/((?:[^/]+\/)+?([^/#?]+))\/?(?:[#?].*)?$/);
+  if (m && !m[1].includes("/-/")) return { key: `${info.courseId}:add:${url}`, url: `https://gitlab.com/${m[1]}/-/archive/HEAD/${m[2]}-HEAD.zip`,
+                                          fileName: `${safe(m[2])}.zip`, ctx };
+  const title = esc(k.text || url);
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta http-equiv="refresh" content="0;url=${esc(url)}"></head>` +
+    `<body><h1>${title}</h1><p><a href="${esc(url)}">${esc(url)}</a></p></body></html>`;
+  return { key: `${info.courseId}:add:${url}`, url: "data:text/html;charset=utf-8," + encodeURIComponent(doc),
+           fileName: `${safe(k.text)}.html`, ctx, page: true };
 }
 
 let lastQueue = null;
