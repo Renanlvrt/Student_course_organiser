@@ -36,6 +36,7 @@ API = {
         {"id": "_13_1", "title": "Repository for practicals", "hasChildren": False, "contentHandler": {"id": LINK, "url": f"http://127.0.0.1:{PORT}/web/repo"}},
         {"id": "_14_1", "title": "Reading guidance", "hasChildren": False, "contentHandler": {"id": DOC}},
         {"id": "_15_1", "title": "Exam notes", "hasChildren": False, "contentHandler": {"id": LINK, "url": f"http://127.0.0.1:{PORT}/files/notes"}},
+        {"id": "_17_1", "title": "Practical 4: Web security", "hasChildren": True, "contentHandler": {"id": DOC}},
         {"id": "_16_1", "title": "Shortcut to the coversheet", "hasChildren": False, "contentHandler": {"id": COURSELINK, "targetId": "_21_1"}}]},
     f"{C}/v1/courses/_1_1/contents/_11_1/children": {"results": [
         {"id": "_111_1", "title": "week12-buffer-overflows.pdf", "hasChildren": False, "contentHandler": {"id": FILE}}]},
@@ -44,6 +45,10 @@ API = {
         "body": '<p>Sheet: <a href="@X@EmbeddedFile.requestUrlStub@X@bbcswebdav/xid-555_1" data-bbfile=\'{"linkName":"practical1.pdf"}\'>practical1.pdf</a></p>'},
     f"{C}/v1/courses/_1_1/contents/_12_1/children": {"results": [{"id": "_121_1", "title": "ultraDocumentBody", "hasChildren": False, "contentHandler": {"id": DOC}}]},
     f"{C}/v1/courses/_1_1/contents/_121_1/attachments": {"results": [{"id": "_a2_1", "fileName": "practical-sheet.pdf"}]},
+    # Ultra: the practical's words and links live in its hidden child, with no file at all
+    f"{C}/v1/courses/_1_1/contents/_17_1/children": {"results": [{"id": "_171_1", "title": "ultraDocumentBody", "hasChildren": False, "contentHandler": {"id": DOC}}]},
+    f"{C}/v1/courses/_1_1/contents/_171_1": {"id": "_171_1", "title": "ultraDocumentBody", "contentHandler": {"id": DOC},
+        "body": LONG + '<p>Starter code: <a href="https://github.com/example/websec-practical">repository</a></p>'},
     f"{C}/v1/courses/_1_1/contents/_14_1": {"id": "_14_1", "title": "Reading guidance", "contentHandler": {"id": DOC}, "body": LONG},
     f"{C}/v1/courses/_1_1/contents/_20_1/children": {"results": [
         {"id": "_21_1", "title": "COMP3761 Security In-year test Coversheet.pdf", "hasChildren": False, "contentHandler": {"id": FILE}}]},
@@ -141,6 +146,8 @@ def main():
         "file behind Ultra's @X@ placeholder link": "practical1.pdf" in names,
         "extension-less link that is a PDF, named with .pdf": "Exam notes.pdf" in names,
         "text-only page kept as .html": "Reading guidance.html" in names,
+        "practical written only in Ultra's hidden body, kept as its own page": "Practical 4_ Web security.html" in names,
+        "every item listed as checked": any(k["title"].startswith("Practical 4") for k in res.get("scanned", [])),
         "Assessment section": "coversheet.pdf" in names,
         "placeholder link resolved to the real address": any("/bbcswebdav/xid-555_1" in f["url"] and "@X@" not in f["url"]
                                                            for f in res.get("files", [])),

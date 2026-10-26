@@ -154,64 +154,82 @@
     const course = await getCourse(courseId);
     const files = [];
     const skipped = [];
+    const scanned = [];                            // every item looked at, shown in the popup
     const seen = new Set();
     const top = await listAll(`/v1/courses/${courseId}/contents`);
     const queue = top.filter((c) => sectionIds.includes(c.id)).map((c) => ({ node: c, chain: [] }));
     const visited = new Set();
-    for (let guard = 0; queue.length && guard < 3000; guard++) {
-      const { node, chain } = queue.shift();
-      if (visited.has(node.id)) continue;
-      visited.add(node.id);
+    const tryList = (path) => listAll(path).catch(() => []);
+
+    async function visit({ node, chain }) {
       const title = clean(node.title);
-      // Files embedded in Ultra documents sit under an internal "ultraDocumentBody" item: not a real title.
+      // Ultra keeps a document's text and files in an internal "ultraDocumentBody" child: it stands for its parent.
       const junk = /^ultra\s*document\s*body/i.test(title);
+      const shown = junk ? chain[0] || "Page" : title;
       const ctx = { ...course, item_title: junk ? "" : title, chain, source: "rest" };
       const innerChain = junk ? chain : [title, ...chain];
-      const item = await fullItem(courseId, node);
+      const [item, kids, atts] = await Promise.all([
+        fullItem(courseId, node),
+        tryList(`/v1/courses/${courseId}/contents/${node.id}/children`),   // folders, modules, documents alike
+        tryList(`/v1/courses/${courseId}/contents/${node.id}/attachments`)]);
       const handler = (item.contentHandler && item.contentHandler.id) || "";
-      const before = files.length;
-      // Children: folders, lessons, and documents too (Ultra keeps a document's files in child items).
-      if (node.hasChildren || /document|lesson|folder|assignment/i.test(handler)) {
-        let kids = [];
-        try { kids = await listAll(`/v1/courses/${courseId}/contents/${node.id}/children`); } catch (e) { /* none / hidden */ }
-        for (const k of kids) queue.push({ node: k, chain: innerChain });
-      }
+      for (const k of kids) queue.push({ node: k, chain: innerChain });
       // A link to another item of the course: collect that item as well.
       const target = item.contentHandler && (item.contentHandler.targetId || item.contentHandler.target_id);
       if (target && !visited.has(target)) {
         try { queue.push({ node: await api(`/v1/courses/${courseId}/contents/${target}`), chain: innerChain }); } catch (e) { /* gone */ }
       }
-      // Attachments: asked for every item, whatever its type.
-      let atts = [];
-      try { atts = await listAll(`/v1/courses/${courseId}/contents/${node.id}/attachments`); } catch (e) { /* none */ }
+      const mine = [];
       for (const a of atts) {
-        files.push({ key: `${courseId}:${a.id}`, url: `${API}/v1/courses/${courseId}/contents/${node.id}/attachments/${a.id}/download`,
-                     fileName: a.fileName, ctx });
+        mine.push({ key: `${courseId}:${a.id}`, url: `${API}/v1/courses/${courseId}/contents/${node.id}/attachments/${a.id}/download`,
+                    fileName: a.fileName, ctx });
       }
       // Links written in the page itself: "Lecture 3: Designing architectures (slides, encoder, …)".
       const body = typeof item.body === "string" ? item.body : "";
       const extUrl = item.contentHandler && item.contentHandler.url;
       const html = body + (extUrl ? `<p><a href="${extUrl}">${title}</a></p>` : "");
       const { files: linked, skipped: notFiles } = BBParse.bodyLinks(html, location.origin);
-      const linkCtx = (f) => ({ ...course, item_title: f.line || ctx.item_title, link_text: f.linkText,
-                                chain: junk ? chain : [title, ...chain], source: "rest" });
-      for (const f of linked) files.push({ key: `${courseId}:${f.url}`, url: f.url, fileName: f.fileName, ctx: linkCtx(f) });
-      // Links with no file extension: ask the server; documents behind them are downloaded too.
-      for (const k of notFiles) {
-        const r = /^https?:/i.test(k.href) ? await probe(new URL(BBParse.resolve(k.href, location.origin), location.origin).href) : null;
+      const linkCtx = (f) => ({ ...course, item_title: f.line || ctx.item_title, link_text: f.linkText, chain: innerChain, source: "rest" });
+      for (const f of linked) mine.push({ key: `${courseId}:${f.url}`, url: f.url, fileName: f.fileName, ctx: linkCtx(f) });
+      // Links with no file extension: ask the server (all at once); documents behind them are downloaded too.
+      const probes = await Promise.all(notFiles.map((k) => /^https?:/i.test(k.href)
+        ? probe(new URL(BBParse.resolve(k.href, location.origin), location.origin).href) : null));
+      notFiles.forEach((k, n) => {
+        const r = probes[n];
         if (r && r.file) {                          // named so the organiser knows its type: "Exam notes.pdf"
-          const named = /\.[a-z0-9]{2,5}$/i.test(r.fileName || "") ? r.fileName : `${(k.text || r.fileName || "file").replace(/[<>:"/\\|?*]/g, "_")}${r.ext || ""}`;
-          files.push({ key: `${courseId}:${r.url}`, url: r.url, fileName: named, ctx: linkCtx({ ...k, linkText: k.text }) });
-        }
-        else skipped.push({ ...k, section: title });
+          const named = /\.[a-z0-9]{2,5}$/i.test(r.fileName || "") ? r.fileName : `${(k.text || r.fileName || "file").replace(/[<>:"/\|?*]/g, "_")}${r.ext || ""}`;
+          mine.push({ key: `${courseId}:${r.url}`, url: r.url, fileName: named, ctx: linkCtx({ ...k, linkText: k.text }) });
+        } else skipped.push({ ...k, section: shown });
+      });
+      // Words written in the page (instructions, links to repositories...) but no file: keep the page itself.
+      const words = body.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+      let page = false;
+      if (!mine.length && words.length > 40 && !/folder/i.test(handler)) {
+        // keyed by its place, so a document and its "ultraDocumentBody" give one page, not two
+        mine.push({ ...pageFile(courseId, { ...item, title: shown }, body, junk ? { ...ctx, item_title: shown } : ctx),
+                    key: `${courseId}:page:${innerChain.join("/")}` });
+        page = true;
       }
-      // A page with words but no file at all: keep the page itself rather than miss it.
-      const words = body.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").trim();
-      if (files.length === before && !junk && !node.hasChildren && words.length > 40 && !/folder/i.test(handler)) {
-        files.push(pageFile(courseId, item, body, ctx));
-      }
+      files.push(...mine);
+      if (!junk || mine.length) scanned.push({ title: shown, path: [...chain].reverse().join(" › "), files: mine.length, page, kind: handler.replace(/^resource\/x-bb-/, "") });
     }
-    return { files: files.filter((f) => !seen.has(f.key) && seen.add(f.key)), skipped };
+
+    // Several items at a time: each needs its details, children and attachments.
+    let running = 0;
+    await new Promise((done) => {
+      const pump = () => {
+        while (running < 6 && queue.length && visited.size < 3000) {
+          const job = queue.shift();
+          if (visited.has(job.node.id)) continue;
+          visited.add(job.node.id);
+          running++;
+          visit(job).catch(() => {}).finally(() => { running--; pump(); });
+        }
+        if (!running) done();
+      };
+      pump();
+    });
+    return { files: files.filter((f) => !seen.has(f.key) && seen.add(f.key)), skipped, scanned };
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {

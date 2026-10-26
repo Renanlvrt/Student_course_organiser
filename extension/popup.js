@@ -94,6 +94,8 @@ async function scan() {
     <div class="muted" style="margin-top:8px">${res.files.length} file(s) found · <b style="color:var(--fg)">${found.length} new</b>${skipped ? ` · ${skipped} already downloaded` : ""}</div>
     <ul>${found.slice(0, 60).map((f) => `<li style="cursor:default"><span>${esc(f.fileName || f.ctx.link_text || "file")}</span><span class="n">${esc(f.ctx.item_title || f.ctx.chain[0] || "")}</span></li>`).join("")}</ul>
     <button id="go" ${found.length ? "" : "disabled"}>Download ${found.length} new file(s)</button>
+    ${(res.scanned || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.scanned.length} item(s) checked</summary>
+      <ul>${res.scanned.map((k) => `<li style="cursor:default"><span>${esc(k.title)}</span><span class="n">${k.page ? "page saved" : k.files ? `${k.files} file(s)` : esc(k.kind || "")}</span></li>`).join("")}</ul></details>` : ""}
     ${(res.skipped || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.skipped.length} web link(s) skipped (Colab, blogs, web pages, not files)</summary>
       <ul>${res.skipped.slice(0, 40).map((k) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span></li>`).join("")}</ul></details>` : ""}`;
   $("go") && $("go").addEventListener("click", async () => {

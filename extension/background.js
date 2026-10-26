@@ -77,9 +77,11 @@ async function probeLink(url) {
   for (const method of ["HEAD", "GET"]) {
     try {
       const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 6000);   // a slow web page must not hold the scan up
       const res = await fetch(url, { method, credentials: "include", redirect: "follow", signal: ctl.signal });
       const type = res.headers.get("content-type") || "";
       const disp = res.headers.get("content-disposition") || "";
+      clearTimeout(timer);
       ctl.abort();                                   // headers are enough
       if (!res.ok && method === "HEAD") continue;
       const m = disp.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
@@ -88,7 +90,7 @@ async function probeLink(url) {
       const ext = (type.match(/pdf|zip|csv|markdown|x-python|ipynb/) || [""])[0].replace("markdown", "md").replace("x-python", "py") ||
         (/wordprocessingml|msword/.test(type) ? "docx" : /presentationml|powerpoint/.test(type) ? "pptx" : /text\/plain/.test(type) ? "txt" : "");
       return { file, url: res.url, fileName, ext: ext ? "." + ext : "", type };
-    } catch (e) { /* try GET */ }
+    } catch (e) { if (e.name === "AbortError") break; /* else try GET */ }
   }
   return { file: false };
 }
