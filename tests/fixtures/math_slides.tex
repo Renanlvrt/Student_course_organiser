@@ -1,0 +1,33 @@
+% Test fixture for Alt+L: Beamer slides with the constructs lecture PDFs use (own text, compiled with pdflatex).
+% Sans-serif maths (CMSSI letters, CMMI/CMSY symbols) and pink blocks, like the department's slides.
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+\usecolortheme{rose}
+\setbeamercolor{block title}{bg=red!20,fg=red!70!black}
+\setbeamercolor{block body}{bg=red!7}
+\setbeamercolor{math text}{fg=blue}
+\begin{document}
+\begin{frame}{Height bound}
+  Every search halves the remaining keys, so after $O(\log n)$ levels we reach the bottom.
+\end{frame}
+\begin{frame}
+  \begin{theorem}
+    The height of a random tower over $n$ keys is $O(\log n)$ with high probability.
+  \end{theorem}
+  \begin{proof}
+    \begin{itemize}
+      \item Let $H(y)$ be the tower height of key $y$, and $H = \max H(y)$.
+      \item A key reaches level $k$ only after $k$ heads in a row,
+            so $\Pr(H(y) \geq k) \leq 2^{-k}$.
+      \item The tower is tall when one key is tall:
+            $\Pr(H \geq k) = \Pr(H(1) \geq k \vee H(2) \geq k \vee \cdots \vee H(n) \geq k)$
+      \item By the union bound -- $\Pr(A \vee B) \leq \Pr(A) + \Pr(B)$ for any events $A$ and $B$ --
+            we get: $\Pr(H \geq k) \leq \sum_{y=1}^{n} \Pr(H(y) \geq k) = n \cdot \Pr(H(y) \geq k) = \frac{n}{2^k}$
+      \item For any $d > 2$, with $k = d \cdot \log_2 n$ we have $\Pr(H \geq d \log_2 n) \leq \frac{n}{2^{d \cdot \log_2 n}} = \frac{n}{n^d} = \frac{1}{n^{d-1}} < \frac{1}{n}$
+    \end{itemize}
+  \end{proof}
+\end{frame}
+\begin{frame}{Treaps}
+  A treap keeps keys in search order and priorities in heap order.
+\end{frame}
+\end{document}

@@ -876,25 +876,17 @@
     }).filter((t) => t.rows.length);
     items = items.filter((it) => !it.inGrid);
 
-    // lines: same baseline, left to right; raised/lowered small text (indices, exponents) stays on its line
-    items.sort((p, q) => (Math.abs(q.y - p.y) > Math.max(p.size, q.size) * 0.45 ? q.y - p.y : p.x - q.x));
-    const lines = [];
-    for (const it of items) {
-      const last = lines[lines.length - 1];
-      if (last && Math.abs(last.y - it.y) <= Math.max(last.first, it.size) * 0.45 && it.x >= last.x - it.size) {
-        last.items.push(it);
-        last.end = Math.max(last.end, it.x + it.w);
-      } else {
-        lines.push({ y: it.y, x: it.x, end: it.x + it.w, first: it.size, items: [it] });
-      }
-    }
+    // lines: rows of text on one baseline, with the smaller pieces typeset around them (indices, exponents, a
+    // fraction's numerator and denominator), left to right
+    const lines = buildRows(items);
     for (const l of lines) {
-      l.items.sort((p, q) => p.x - q.x);
-      l.runs = runsOf(l.items);
+      l.bullet = bulletBefore(ctx, raster, l);       // Beamer/Word bullets are drawn shapes, not text
+      l.runs = mathRuns(l);                          // prose as text runs, formulas as picture runs (filled below)
+      if (l.bullet) l.runs.unshift({ s: "• ", ...styleOf(l.items[0]), color: l.bullet.color, italic: false, bold: false });
       l.text = l.runs.map((r) => r.s).join("");
-      l.size = mostCommon(l.runs.filter((r) => r.s.trim() && !r.va).map((r) => [r.size, r.s.length])) || l.first;
-      l.y = mostCommon(l.items.filter((it) => Math.abs(it.size - l.size) < 0.6).map((it) => [it.y, it.str.length])) ?? l.y;
-      l.math = isMathLine(l);
+      // a row that is only a formula is a display equation (one picture); text layers without font names fall
+      // back to the symbol heuristic
+      l.math = !l.bullet && (l.allMath || (!l.hasProse && isMathLine(l)));
       // segments: pieces of the line separated by a wide gap (table cells, tab stops)
       l.segs = [];
       for (const it of l.items) {
@@ -909,12 +901,13 @@
     const colW = Math.max(1, Math.max(...lines.map((l) => l.end)) - Math.min(...lines.map((l) => l.x)));
     for (let pass = 0; pass < 3; pass++) {
       lines.forEach((l, k) => {
-        if (l.math || l.end - l.x > colW * 0.6) return;
+        if (l.math || l.hasProse || l.bullet || l.end - l.x > colW * 0.6) return;
         const near = (o) => o && o.math && Math.abs(o.y - l.y) < Math.max(o.size, l.size) * 2.2;
         if (near(lines[k - 1]) || near(lines[k + 1])) l.math = true;
       });
     }
-    const left = Math.min(...lines.map((l) => l.x), ...gridTables.map((t) => t.anchors[0]));
+    const startOf = (l) => (l.bullet ? Math.min(l.bullet.x, l.x) : l.x);
+    const left = Math.min(...lines.map(startOf), ...gridTables.map((t) => t.anchors[0]));
     const right = Math.max(...lines.map((l) => l.end), ...gridTables.map((t) => t.right));
     const width = Math.max(1, right - left);
     const centred = (l) => {
@@ -935,7 +928,7 @@
       const t = tableAt(lines, i);
       if (t) { blocks.push(t); i = t.last; continue; }
       const prev = b && b.kind === "para" && b.lines[b.lines.length - 1];
-      const joins = prev &&
+      const joins = prev && !l.bullet &&
         prev.y - l.y < Math.max(prev.size, l.size) * 1.45 &&            // normal line spacing
         Math.abs(prev.size - l.size) < 1 &&                            // same size
         prev.end > right - Math.max(prev.size * 3, width * 0.12) &&   // previous line ran to the right edge
@@ -944,11 +937,11 @@
       if (joins) {
         const lastRun = b.runs[b.runs.length - 1];
         if (/[A-Za-z]-$/.test(lastRun.s) && /^[a-z]/.test(l.text)) lastRun.s = lastRun.s.slice(0, -1);   // re-join hyphenated words
-        else if (!/\s$/.test(lastRun.s)) b.runs.push({ ...lastRun, s: " ", href: null, va: null });
+        else if (lastRun.math || !/\s$/.test(lastRun.s)) b.runs.push({ ...lastRun, s: " ", href: null, va: null, math: null });
         for (const r of l.runs) mergeRun(b.runs, r);
         b.lines.push(l);
       } else {
-        blocks.push({ kind: "para", lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: l.x - left, centred: centred(l) });
+        blocks.push({ kind: "para", lines: [l], runs: l.runs.map((r) => ({ ...r })), indent: startOf(l) - left, centred: centred(l) });
       }
     }
     blocks.push(...gridTables);                                     // in reading order, top first (y grows upwards)
@@ -962,6 +955,13 @@
     }
     for (const b of blocks) if (b.kind === "table" && b.ruled === undefined) b.ruled = isRuled(ctx, raster, b);
     for (const b of blocks) if (b.kind === "math") b.img = await mathImage(b, raster, ptPer);
+    for (const b of blocks) if (b.kind === "para") for (const r of b.runs) if (r.math) r.img = await inlineMath(r, raster, ptPer);
+    // coloured boxes behind blocks (theorem/proof boxes...): kept as shaded table cells, which OneNote keeps
+    for (const b of blocks) {
+      const ls = b.lines || b.rows.map((r) => r.line);
+      const top = Math.max(...ls.map((l) => l.top ?? l.y + (l.size || 10))), bottom = Math.min(...ls.map((l) => l.bottom ?? l.y - (l.size || 10) * 0.3));
+      b.bg = backgroundOf(raster, left, right, bottom, top);
+    }
 
     // HTML in the subset OneNote keeps (checked by pasting into OneNote): fonts, sizes, colours, bold/italic,
     // links, sub/superscripts, margin-left indents and tables. It drops centring, margins and line spacing, so
@@ -969,10 +969,11 @@
     // sized empty paragraphs.
     const pt = (v) => round1(v * ptPer);
     const all = blocks.flatMap((b) => (b.kind === "para" ? b.runs : b.kind === "table" ? b.rows.flatMap((r) => r.cells.flat()) : []));
-    const common = (key) => mostCommon(all.filter((r) => r.s.trim()).map((r) => [r[key], r.s.length]));
+    const common = (key) => mostCommon(all.filter((r) => r.s.trim() && !r.math).map((r) => [r[key], r.s.length]));
     const base = { family: common("family") || "Arial", size: common("size") || 11, color: common("color") || "#000000" };
     const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const span = (r, full) => {
+      if (r.math) return r.img || esc(r.s);           // a formula: its typeset picture
       const s = [];
       if (full || r.family !== base.family) s.push(`font-family:${cssFamily(r.family)}`);
       if (full || r.size !== base.size) s.push(`font-size:${Math.round(r.size * ptPer * 2) / 2}pt`);
@@ -985,7 +986,7 @@
       return h;
     };
     const spacer = (gap) => (gap * ptPer >= 2.5 ? `<p style="margin:0;font-size:${Math.max(1, Math.round(gap * ptPer / 1.15))}pt">&nbsp;</p>` : "");
-    const html = blocks.map((b) => {
+    const blockHtml = (b) => {
       if (b.kind === "math") {
         const indent = b.centred ? 0 : pt(b.left - left);
         return (b.img ? `<p style="margin:0 0pt 0 ${indent}pt">${b.img}</p>` : "") + spacer(b.after);
@@ -1002,7 +1003,21 @@
       const style = [`margin:0 ${b.centred ? pt(pad) : 0}pt 0 ${pt(pad)}pt`];
       if (b.centred) style.push("text-align:center");
       return `<p style="${style.join(";")}">${b.runs.map((r) => span(r)).join("")}</p>` + spacer(b.after);
-    }).join("");
+    };
+    // consecutive coloured blocks: one table, a row per colour (a box's title bar and its body)
+    let html = "";
+    for (let k = 0; k < blocks.length;) {
+      if (!blocks[k].bg) { html += blockHtml(blocks[k++]); continue; }
+      let rows = "";
+      while (k < blocks.length && blocks[k].bg) {
+        const bg = blocks[k].bg;
+        let cell = "";
+        while (k < blocks.length && blocks[k].bg === bg) cell += blockHtml(blocks[k++]);
+        rows += `<tr><td bgcolor="${bg}" style="background:${bg};padding:2pt 4pt;vertical-align:top">${cell}</td></tr>`;
+      }
+      const w = Math.ceil((right - left) * ptPer * 4 / 3 + 12);
+      html += `<table border="0" cellspacing="0" cellpadding="0" width="${w}" style="border-collapse:collapse;width:${w}px;margin:0">${rows}</table>`;
+    }
     const text = blocks.map((b) => (b.kind === "table"
       ? b.rows.map((r) => r.cells.map((c) => c.map((x) => x.s).join("")).join("\t")).join("\n")
       : b.kind === "math" ? b.lines.map((l) => l.text).join("\n")
@@ -1029,21 +1044,282 @@
            (scattered && operators && words < 8 && chars / l.items.length < 3);   // text layers: no font names, many tiny pieces
   }
 
-  async function mathImage(b, { canvas, box1, scale, v1 }, ptPer) {
+  // A display equation (rows that are only mathematics): one picture of everything typeset there.
+  async function mathImage(b, raster, ptPer) {
     const its = b.lines.flatMap((l) => l.items);
-    const xa = Math.min(...its.map((it) => it.x)) - 2, xb = Math.max(...its.map((it) => it.x + it.w)) + 2;
-    const ya = Math.min(...its.map((it) => it.y - it.size * 0.45)) - 2, yb = Math.max(...its.map((it) => it.y + it.size * 1.05)) + 2;
-    b.left = xa;
-    const [ax, ay] = v1.convertToViewportPoint(xa, yb), [bx, by] = v1.convertToViewportPoint(xb, ya);
-    const sx = Math.max(0, Math.floor((Math.min(ax, bx) - box1.x) * scale)), sy = Math.max(0, Math.floor((Math.min(ay, by) - box1.y) * scale));
-    const sw = Math.min(canvas.width - sx, Math.ceil(Math.abs(bx - ax) * scale)), sh = Math.min(canvas.height - sy, Math.ceil(Math.abs(by - ay) * scale));
-    if (sw < 2 || sh < 2) return "";
+    const box = { x0: Math.min(...its.map((it) => it.x)), x1: Math.max(...its.map((it) => it.x + it.w)),
+                  y0: Math.min(...b.lines.map((l) => l.bottom)), y1: Math.max(...b.lines.map((l) => l.top)) };
+    const lim = { x0: -Infinity, x1: Infinity, y0: b.lines[b.lines.length - 1].downBase, y1: b.lines[0].upBase,
+                  base0: b.lines[b.lines.length - 1].y, base1: b.lines[0].y, size: b.lines[0].size };
+    b.left = box.x0;
+    return pictureOf(raster, box, lim, ptPer, b.lines.map((l) => l.text).join(" "));
+  }
+
+  // ---- mathematics inside text -------------------------------------------------------------------------------
+  // Rows: the pieces on one baseline, plus the smaller pieces typeset around them - indices, exponents, a
+  // fraction's numerator and denominator, the limits of a sum - which belong to that row and must not become lines
+  // of their own (that is what cut formulas in two and pasted their halves as separate lines).
+  function buildRows(items) {
+    for (const it of items) {
+      it.op = false;
+      it.script = it.str.trim().length <= 14 && items.some((o) => o !== it && o.size >= it.size / 0.88 &&
+        Math.abs(o.y - it.y) <= o.size * 0.95 && it.x + it.w >= o.x - o.size * 2 && it.x <= o.x + o.w + o.size * 2);
+    }
+    const rows = [];
+    const place = (it) => {
+      const r = rows.find((r) => Math.abs(r.y - it.y) <= Math.max(r.size, it.size) * 0.2 ||
+        (Math.abs(r.y - it.y) <= Math.max(r.size, it.size) * 0.35 && Math.min(r.size, it.size) >= Math.max(r.size, it.size) * 0.8));
+      if (r) r.items.push(it); else rows.push({ y: it.y, size: it.size, items: [it] });
+    };
+    items.filter((it) => !it.script).sort((p, q) => q.y - p.y || p.x - q.x).forEach(place);
+    // big operators (a sum or integral sign) sit on a baseline of their own inside a formula: part of that row
+    const span = (r) => [Math.min(...r.items.map((i) => i.x)), Math.max(...r.items.map((i) => i.x + i.w))];
+    for (const r of rows.slice()) {
+      if (r.items.length > 3) continue;
+      // TeX's big operators hang down from their origin: the row is the one whose baseline is just below
+      const hosts = rows.filter((o) => o !== r && o.items.length > r.items.length && Math.abs(o.y - r.y) <= o.size * 0.8 &&
+        r.items.every((i) => i.x > span(o)[0] && i.x + i.w < span(o)[1]));
+      const host = hosts.filter((o) => o.y <= r.y).sort((p, q) => q.y - p.y)[0] || hosts[0];
+      if (!host) continue;
+      for (const i of r.items) { i.op = true; host.items.push(i); }
+      rows.splice(rows.indexOf(r), 1);
+    }
+    for (const it of items.filter((i) => i.script)) {
+      let best = null;
+      for (const r of rows) {
+        if (r.size * 0.88 < it.size || it.y < r.y - r.size * 0.8 || it.y > r.y + r.size * 1.0) continue;
+        const rx0 = Math.min(...r.items.map((i) => i.x)), rx1 = Math.max(...r.items.map((i) => i.x + i.w));
+        if (it.x + it.w < rx0 - r.size * 2 || it.x > rx1 + r.size * 2) continue;
+        if (!best || Math.abs(it.y - r.y) < Math.abs(it.y - best.y)) best = r;
+      }
+      if (best) best.items.push(it); else { it.script = false; place(it); }
+    }
+    for (const r of rows) {
+      r.items.sort((p, q) => p.x - q.x);
+      const mains = r.items.filter((i) => !i.script);
+      r.size = mostCommon(mains.map((i) => [Math.round(i.size * 2) / 2, i.str.length])) || r.size;
+      r.y = mostCommon(mains.filter((i) => Math.abs(i.size - r.size) < 0.6).map((i) => [i.y, i.str.length])) ?? r.y;
+      r.first = r.size;
+      r.x = Math.min(...r.items.map((i) => i.x));
+      r.end = Math.max(...r.items.map((i) => i.x + i.w));
+      // (a big operator's origin is at its top: it reaches the row's top and hangs below the baseline)
+      r.top = Math.max(...r.items.map((i) => (i.op ? Math.min(i.y, r.y + r.size * 0.9) : i.y + i.size * 0.85)));
+      r.bottom = Math.min(...r.items.map((i) => (i.op ? Math.min(r.y - r.size * 0.3, i.y - i.size * 1.1) : i.y - i.size * 0.3)));
+    }
+    rows.sort((p, q) => q.y - p.y || p.x - q.x);
+    rows.forEach((r, k) => {                       // pictures stop at the white gap before the neighbouring rows
+      r.upBase = k ? rows[k - 1].y : Infinity;
+      r.downBase = k < rows.length - 1 ? rows[k + 1].y : -Infinity;
+    });
+    return rows;
+  }
+
+  // Formulas inside a row, the way pdfmath finds inline maths: every glyph from a maths font (CMMI, CMSY, Cambria
+  // Math...), every maths symbol and every small raised/lowered piece is a seed; a formula grows from its seeds
+  // through letters, digits, brackets and operator names (log, max, Pr...) and stops at a word of prose.
+  const OP_NAMES = /^(Pr|log|ln|lg|exp|max|min|sup|inf|lim|sin|cos|tan|sec|csc|cot|det|deg|dim|gcd|lcm|mod|arg|Var|Cov|poly|rank|tr)$/;
+  const SEED = /[=<>+×÷±∓≤≥≠≈≡∼≃≪≫∝∑∏∫∮√∞∂∇∈∉∋⊂⊆⊃⊇∪∩∧∨¬→←↔⇒⇐⇔↦∀∃ℓ∅⋯⋅·′]|[Ͱ-Ͽ]|[\u{1d400}-\u{1d7ff}]/u;
+  function mathRuns(l) {
+    const toks = [];
+    for (const it of l.items) {
+      const n = it.str.length || 1;
+      let at = 0;
+      for (const part of it.str.split(/(\s+)/)) {
+        if (!part) continue;
+        // trailing punctuation is the sentence's, not the formula's: "y," "x)."
+        const m = part.trim() && part.match(/^(.*?[^.,;:!?])([.,;:!?]+)$/);
+        for (const p of m ? [m[1], m[2]] : [part]) {
+          toks.push({ s: p, it, x: it.x + it.w * at / n, w: it.w * p.length / n, space: !p.trim() });
+          at += p.length;
+        }
+      }
+    }
+    const isProse = (t) => !t.space && !t.it.script && !t.it.op && !t.it.mathFont &&
+      (t.s.match(/[A-Za-zÀ-ɏ]+/g) || []).some((c) => !OP_NAMES.test(c) && (c.length >= 3 || (c.length === 2 && !t.it.italic)));
+    for (const t of toks) {
+      t.prose = isProse(t);
+      t.seed = !t.space && !t.prose && (t.it.mathFont || t.it.script || t.it.op || SEED.test(t.s));
+    }
+    l.hasProse = toks.some((t) => t.prose);
+    l.allMath = !l.hasProse && toks.some((t) => t.seed);
+    // formulas: stretches of non-prose tokens holding a seed, without the spaces and punctuation at their ends
+    const marks = new Array(toks.length).fill(false);
+    for (let i = 0; i < toks.length;) {
+      if (toks[i].prose) { i++; continue; }
+      let j = i;
+      while (j < toks.length && !toks[j].prose) j++;
+      let a = i, b = j - 1;
+      const edge = (t) => t.space || /^[–—.,;:!?]+$/.test(t.s);
+      while (a <= b && edge(toks[a])) a++;
+      while (b >= a && edge(toks[b])) b--;
+      if (toks.slice(a, b + 1).some((t) => t.seed)) {
+        // punctuation printed in the same piece as the formula's end stays with it, so no glyph is split
+        while (b + 1 < toks.length && toks[b + 1].it === toks[b].it && /^[.,;:!?]+$/.test(toks[b + 1].s)) b++;
+        for (let k = a; k <= b; k++) marks[k] = true;
+      }
+      i = j;
+    }
+    const runs = [];
+    let text = [];
+    const flushText = () => {
+      if (!text.length) return;
+      for (const r of runsOf(text.map((t) => ({ ...t.it, str: t.s, x: t.x, w: t.w })))) mergeRun(runs, r);
+      text = [];
+    };
+    const gap = (a, b) => b.x - (a.x + a.w) > l.size * 0.12;   // PDF.js leaves word spaces out: measure them
+    const space = (t) => ({ ...t, s: " ", space: true, x: t.x + t.w, w: 0 });
+    let afterMath = null;
+    for (let i = 0; i < toks.length;) {
+      if (!marks[i]) {
+        if (afterMath && !toks[i].space && gap(afterMath, toks[i])) text.push(space(afterMath));
+        afterMath = null;
+        text.push(toks[i++]);
+        continue;
+      }
+      const lastT = text[text.length - 1];
+      if (lastT && !lastT.space && gap(lastT, toks[i])) text.push(space(lastT));
+      flushText();
+      let j = i;
+      while (j < toks.length && marks[j]) j++;
+      const f = toks.slice(i, j);
+      let alt = "";
+      f.forEach((t, k) => { if (k && t.x - (f[k - 1].x + f[k - 1].w) > l.size * 0.15 && !/\s$/.test(alt) && !t.space) alt += " "; alt += t.s; });
+      const prev = toks.slice(0, i).reverse().find((t) => !t.space), next = toks.slice(j).find((t) => !t.space);
+      runs.push({ ...styleOf(f[0].it), s: alt, math: f, row: l,
+                  xLo: prev ? prev.x + prev.w : -Infinity, xHi: next ? next.x : Infinity });
+      afterMath = f[f.length - 1];
+      i = j;
+    }
+    flushText();
+    return runs;
+  }
+
+  // A formula inside a sentence: its picture, cropped to the ink, sitting on the line's baseline.
+  async function inlineMath(r, raster, ptPer) {
+    const its = r.math.filter((t) => !t.space);
+    const l = r.row;
+    const box = { x0: Math.min(...its.map((t) => t.x)), x1: Math.max(...its.map((t) => t.x + t.w)),
+                  y0: Math.min(l.y - l.size * 0.25, ...its.map((t) => t.it.y - t.it.size * 0.3)),
+                  y1: Math.max(l.y + l.size * 0.7, ...its.map((t) => t.it.y + t.it.size * 0.8)) };
+    return pictureOf(raster, box, { x0: r.xLo, x1: r.xHi, y0: l.downBase, y1: l.upBase, base0: l.y, base1: l.y, size: l.size }, ptPer, r.s, l.y);
+  }
+
+  // The rendered pixels of the box, read once per box.
+  function pixelsOf(raster) {
+    if (!raster.px) raster.px = raster.canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, raster.canvas.width, raster.canvas.height).data;
+    return raster.px;
+  }
+  const toCanvas = (raster, x, y) => {
+    const [vx, vy] = raster.v1.convertToViewportPoint(x, y);
+    return [(vx - raster.box1.x) * raster.scale, (vy - raster.box1.y) * raster.scale];
+  };
+  function canvasRect(raster, r) {
+    const [ax, ay] = toCanvas(raster, Math.max(r.x0, -1e6), Math.max(r.y0, -1e6));
+    const [bx, by] = toCanvas(raster, Math.min(r.x1, 1e6), Math.min(r.y1, 1e6));
+    const W = raster.canvas.width, H = raster.canvas.height;
+    return { l: Math.max(0, Math.floor(Math.min(ax, bx))), r: Math.min(W - 1, Math.ceil(Math.max(ax, bx))),
+             t: Math.max(0, Math.floor(Math.min(ay, by))), b: Math.min(H - 1, Math.ceil(Math.max(ay, by))) };
+  }
+  // Most common colour in a canvas rectangle (the background), as the average of its 4-bit bucket.
+  function modalColour(raster, c) {
+    const px = pixelsOf(raster), W = raster.canvas.width;
+    const tally = new Map();
+    for (let y = c.t; y <= c.b; y++) for (let x = c.l; x <= c.r; x++) {
+      const i = (y * W + x) * 4, k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+      const e = tally.get(k);
+      if (e) { e.n++; e.r += px[i]; e.g += px[i + 1]; e.b += px[i + 2]; } else tally.set(k, { n: 1, r: px[i], g: px[i + 1], b: px[i + 2] });
+    }
+    let best = null;
+    for (const [k, e] of tally) if (!best || e.n > best.n) best = { ...e, k };
+    return best ? { key: best.k, rgb: [best.r / best.n, best.g / best.n, best.b / best.n].map(Math.round) } : { key: -1, rgb: [255, 255, 255] };
+  }
+
+  // A picture of a formula: start from where its glyphs are said to be, then grow each edge while the next pixel
+  // row/column still holds ink (tall fractions, sum limits, overhanging italics), never past the given limits
+  // (halfway to the neighbouring rows, the neighbouring words), plus one blank pixel of margin.
+  async function pictureOf(raster, box, lim, ptPer, alt, baseline) {
+    const px = pixelsOf(raster), W = raster.canvas.width;
+    const L = canvasRect(raster, lim);
+    let { l, r, t, b } = canvasRect(raster, box);
+    l = Math.max(l, L.l); r = Math.min(r, L.r);
+    const bg = modalColour(raster, { l, r, t: Math.max(t, L.t), b: Math.min(b, L.b) }).rgb;
+    const ink = (x, y) => { const i = (y * W + x) * 4; return Math.abs(px[i] - bg[0]) + Math.abs(px[i + 1] - bg[1]) + Math.abs(px[i + 2] - bg[2]) > 90; };
+    // The boundary with the row above/below: the emptiest pixel line between the two baselines, across this
+    // picture's width (the white gap between the rows; the middle of it when there is a run of blank lines).
+    const valley = (from, to) => {
+      const a = Math.round(Math.min(from, to)), z = Math.round(Math.max(from, to)), mid = (a + z) / 2;
+      let best = null;
+      for (let y = a; y <= z; y++) {
+        let n = 0;
+        for (let x = l; x <= r; x++) if (ink(x, y)) n++;
+        if (!best || n < best.n || (n === best.n && Math.abs(y - mid) < Math.abs(best.y - mid))) best = { n, y };
+      }
+      return best ? best.y : null;
+    };
+    if (lim.base1 !== undefined) {
+      // the gap lies above this row's lowercase letters and below the neighbour's baseline (and mirrored below)
+      const sz = lim.size || 10, y = (v) => toCanvas(raster, box.x0, v)[1];
+      if (Number.isFinite(lim.y1)) { const v = valley(y(lim.y1), y(lim.base1 + sz * 0.45)); if (v !== null) L.t = Math.max(L.t, v); }
+      if (Number.isFinite(lim.y0)) { const v = valley(y(lim.base0), y(lim.y0 + sz * 0.45)); if (v !== null) L.b = Math.min(L.b, v); }
+    }
+    t = Math.max(t, L.t); b = Math.min(b, L.b);
+    if (r - l < 2 || b - t < 2) return "";
+    const rowInk = (y) => { for (let x = l; x <= r; x++) if (ink(x, y)) return true; return false; };
+    const colInk = (x) => { for (let y = t; y <= b; y++) if (ink(x, y)) return true; return false; };
+    for (let pass = 0; pass < 3; pass++) {
+      while (t > L.t && rowInk(t - 1)) t--;
+      while (b < L.b && rowInk(b + 1)) b++;
+      while (l > L.l && colInk(l - 1)) l--;
+      while (r < L.r && colInk(r + 1)) r++;
+    }
+    // a blank margin all round where there is room, so no glyph touches the picture's edge
+    while (t > L.t && rowInk(t)) t--;
+    while (b < L.b && rowInk(b)) b++;
+    if (t > L.t) t--; if (b < L.b) b++; if (l > L.l) l--; if (r < L.r) r++;
+    const sw = r - l + 1, sh = b - t + 1;
     const c = new OffscreenCanvas(sw, sh);
-    c.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    c.getContext("2d").drawImage(raster.canvas, l, t, sw, sh, 0, 0, sw, sh);
     const uri = await blobToDataUri(await c.convertToBlob({ type: "image/png" }));
-    const w = Math.round((xb - xa) * ptPer * 4 / 3), h = Math.round((yb - ya) * ptPer * 4 / 3);
-    const alt = b.lines.map((l) => l.text).join(" ").replace(/"/g, "&quot;");
-    return `<img src="${uri}" width="${w}" height="${h}" alt="${alt}">`;
+    const cssPer = ptPer * 4 / 3 / raster.scale;     // canvas pixels -> CSS pixels of the paste
+    const w = Math.max(1, Math.round(sw * cssPer)), h = Math.max(1, Math.round(sh * cssPer));
+    let va = "";
+    if (baseline !== undefined) {                    // sit on the baseline like the text around it
+      const [, by] = toCanvas(raster, box.x0, baseline);
+      va = ` style="vertical-align:${-Math.round((b - by) * cssPer)}px"`;
+    }
+    const a = String(alt || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    return `<img src="${uri}" width="${w}" height="${h}" alt="${a}"${va}>`;
+  }
+
+  // A bullet drawn as a shape left of the row (Beamer's balls, Word's dots): one small compact blob of ink.
+  function bulletBefore(ctx, raster, l) {
+    const c = canvasRect(raster, { x0: l.x - l.size * 2.5, x1: l.x - l.size * 0.12, y0: l.y - l.size * 0.15, y1: l.y + l.size * 0.8 });
+    if (c.r - c.l < 3 || c.b - c.t < 3) return null;
+    const px = pixelsOf(raster), W = raster.canvas.width;
+    const bg = modalColour(raster, c).rgb;
+    let n = 0, x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1, R = 0, G = 0, B = 0;
+    for (let y = c.t; y <= c.b; y++) for (let x = c.l; x <= c.r; x++) {
+      const i = (y * W + x) * 4;
+      if (Math.abs(px[i] - bg[0]) + Math.abs(px[i + 1] - bg[1]) + Math.abs(px[i + 2] - bg[2]) <= 120) continue;
+      n++; R += px[i]; G += px[i + 1]; B += px[i + 2];
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    if (!n) return null;
+    const unit = l.size * Math.abs(toCanvas(raster, 1, 0)[0] - toCanvas(raster, 0, 0)[0]);   // the font size in canvas px
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const compact = bw >= unit * 0.12 && bh >= unit * 0.12 && bw <= unit * 0.7 && bh <= unit * 0.7 && Math.abs(bw - bh) <= Math.max(bw, bh) * 0.45;
+    if (!compact || n < bw * bh * 0.35 || c.r - x1 < unit * 0.08) return null;
+    const hex = (v) => Math.round(v / n).toString(16).padStart(2, "0");
+    const [vx] = [(x0 / raster.scale) + raster.box1.x];
+    const pdfX = raster.v1.convertToPdfPoint(vx, 0)[0];
+    return { x: pdfX, color: `#${hex(R)}${hex(G)}${hex(B)}` };
+  }
+
+  // The colour behind a block (Beamer's theorem/proof boxes, highlighted panels); null when it is white.
+  function backgroundOf(raster, x0, x1, y0, y1) {
+    const m = modalColour(raster, canvasRect(raster, { x0, x1, y0, y1 }));
+    if (m.rgb.every((v) => v >= 246)) return null;
+    return "#" + m.rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
   }
 
   // Runs of one table cell: its lines top to bottom, joined with spaces (the text reflows in the pasted cell).
@@ -1205,7 +1481,7 @@
                               a.italic === b.italic && (a.href || null) === (b.href || null) && (a.va || null) === (b.va || null);
   function mergeRun(runs, r) {
     const last = runs[runs.length - 1];
-    if (last && (sameStyle(last, r) || !r.s.trim())) last.s += r.s; else runs.push({ ...r });
+    if (last && !last.math && !r.math && (sameStyle(last, r) || !r.s.trim())) last.s += r.s; else runs.push({ ...r });
   }
   function mostCommon(pairs) {
     const tally = new Map();
@@ -1226,14 +1502,20 @@
     let fam = ps.split(/[-,]/)[0].replace(/(PSMT|PS|MT)$/, "");
     const mathFont = /^(CMMI|CMSY|CMEX|CMBSY|MSAM|MSBM|EUFM|EUSM|RSFS|STIX|LMMath|Latin ?Modern ?Math|Cambria ?Math|Symbol|MTExtra|Euclid|TeXGyre\w*Math|XITSMath)/i.test(fam) ||
                      /Math/i.test(fam);
-    if (/^(CM|LM|SF)[A-Z]*\d*$/i.test(fam)) fam = /^(CMMI|CMSY|CMEX)/i.test(fam) ? "Cambria Math" : "Times New Roman";   // TeX fonts
+    // TeX fonts (Computer/Latin Modern): the family and style are in the name - CMSS/CMSSI10 sans, CMTT typewriter,
+    // CMR/CMTI/CMBX roman; LMSans10-Bold...
+    const tex = /^(CM|LM|SF)[A-Z]*\d*$/i.test(fam) || /^LM(Sans|Roman|Mono)/i.test(fam);
+    const texItalic = tex && /^(CM(SS)?(TI|SLTT|SL|SSI|MI|BXTI|SSXI|ITT)|LM\w*(Italic|Oblique|Slanted))/i.test(ps);
+    const texBold = tex && /^(CM(BX|SSBX|SSDC|B)|LM\w*(Bold|Demi))/i.test(ps);
+    if (tex) fam = /^(CMMI|CMSY|CMEX)/i.test(fam) ? "Cambria Math" : /^(CMSS|LMSans|SFSS)/i.test(fam) ? "Arial"
+                 : /^(CMTT|CMITT|CMSLTT|LMMono|SFTT)/i.test(fam) ? "Courier New" : "Times New Roman";
     fam = FAMILY_NAMES[fam] || fam.replace(/([a-z])([A-Z])/g, "$1 $2");
     if (!fam) fam = style && /serif/.test(style.fontFamily) && !/sans/.test(style.fontFamily) ? "Times New Roman" : "Arial";
     const suffix = ps.slice(ps.split(/[-,]/)[0].length);
     return {
       family: fam,
-      bold: !!(f && (f.bold || f.black)) || /bold|black|heavy|semibold|demi/i.test(suffix),
-      italic: !!(f && f.italic) || /italic|oblique/i.test(suffix),
+      bold: !!(f && (f.bold || f.black)) || /bold|black|heavy|semibold|demi/i.test(suffix) || texBold,
+      italic: !!(f && f.italic) || /italic|oblique/i.test(suffix) || texItalic,
       mathFont,
     };
   }
