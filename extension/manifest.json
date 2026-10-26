@@ -72,7 +72,12 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "vendor/pdfjs/web/viewer.html"
+        "vendor/pdfjs/web/viewer.html",
+        "vendor/pdfjs/build/pdf.mjs",
+        "vendor/pdfjs/build/pdf.worker.mjs",
+        "vendor/pdfjs/web/standard_fonts/*",
+        "vendor/pdfjs/web/cmaps/*",
+        "vendor/pdfjs/web/wasm/*"
       ],
       "matches": [
         "<all_urls>"

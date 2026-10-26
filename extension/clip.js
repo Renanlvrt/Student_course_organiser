@@ -213,7 +213,7 @@
       item["text/plain"] = work.then((r) => new Blob([r.text], { type: "text/plain" }));
     }
     navigator.clipboard.write([new ClipboardItem(item)]).then(
-      async () => toast((await work).summary, (await work).save),
+      async () => toast((await work).summary, (await work).save, false, (await work).trace),
       async (e) => {
         let detail = String(e && e.message || e);
         try { await work; } catch (w) { detail = String(w && w.message || w); }
@@ -222,10 +222,12 @@
       });
   }
 
-  function toast(message, save, error) {
+  function toast(message, save, error, trace) {
     if (lastToast) lastToast.remove();
     const { host, root } = makeHost(true);
     lastToast = host;
+    host.dataset.message = message;                // readable from outside the closed shadow root (tests)
+    if (trace) host.dataset.trace = JSON.stringify(trace);
     const t = el("div", "toast" + (error ? " err" : ""));
     const span = el("span");
     span.textContent = message;
@@ -245,6 +247,14 @@
   // in view, otherwise the page is scrolled to each box in turn (then put back).
   async function webClip(boxes, mode) {
     boxes = boxes.slice().sort((a, b) => a.page.top - b.page.top || a.page.left - b.page.left);
+    // A PDF shown by the site's own viewer (Blackboard): read the real file instead of the pixels.
+    let viewerNote = "", viewerTrace = null;
+    if (mode === "text") {
+      const v = await viewerPdfClip(boxes).catch((e) => ({ why: String(e && e.message || e), trace: { failed: "error", error: String(e && e.stack || e) } }));
+      if (v && v.html) return v;
+      if (v && v.why) viewerNote = ` (${v.why})`;
+      viewerTrace = v && v.trace;
+    }
     const sx = scrollX, sy = scrollY;
     const client = (p, ox = sx, oy = sy) => DOMRect.fromRect({ x: p.left - ox, y: p.top - oy, width: p.width, height: p.height });
     // PDF viewers inside the page (Overleaf's preview, other PDF.js viewers): their text layer is positioned text,
@@ -309,16 +319,361 @@
         html = plan.root.outerHTML;
         const pics = plan.visuals.length ? " + " + plural(plan.visuals.length, "picture") : "";
         summary = text.trim() ? `Copied text${pics}${boxes.length > 1 ? ` from ${boxes.length} boxes` : ""} · Ctrl+V`
-                              : "Copied picture · Ctrl+V";
+                              : `Copied picture · Ctrl+V${viewerNote}`;
         if (!text.trim() && !plan.visuals.length) html = imgTag(await blobToDataUri(png), Math.round(boxes[0].page.width), Math.round(boxes[0].page.height));
       } else {
         summary = `Copied exact image${boxes.length > 1 ? ` of ${boxes.length} boxes` : ""} · Ctrl+V`;
       }
       const save = () => saveBlob(png, fileStem(document.title) + " clip.png");
-      return { png, html, text, summary, save };
+      return { png, html, text, summary, save, trace: viewerTrace };
     } finally {
       if (scrollX !== sx || scrollY !== sy) window.scrollTo(sx, sy);
     }
+  }
+
+  // ---- PDFs shown by a site's own viewer (Blackboard's file viewer) ---------------------------------------
+  // The viewer shows the pages as pictures, so the text is not in the page. The real file is: it is the one named
+  // above the viewer, listed in the document's own content (REST, like the scanner reads it) or already loaded by
+  // the page. It is downloaded once, opened with PDF.js, and the box is placed on its page from the screenshot - the
+  // page outlines and a comparison of the screen with small renders of the pages, so any viewer works.
+  async function viewerPdfClip(boxes) {
+    // trace: what each stage found, carried with the result (the toast shows the reason, tests read the rest)
+    const trace = {};
+    const fail = (stage, why) => ({ why, trace: { ...trace, failed: stage } });
+    const sel = boxes.map((b) => DOMRect.fromRect({ x: b.page.left - scrollX, y: b.page.top - scrollY, width: b.page.width, height: b.page.height }));
+    const docs = frameDocs();
+    const hit = viewerUnder(sel[0], docs);
+    trace.viewer = hit ? hit.el.tagName.toLowerCase() : null;
+    trace.box = [sel[0].left, sel[0].top, sel[0].width, sel[0].height].map(Math.round);
+    if (!hit) trace.seen = viewerUnder.seen;
+    if (!hit) return { trace };                     // not a viewer: the usual web page path
+    const file = await findViewerPdf(sel[0], docs);
+    trace.file = file && { name: file.name, url: file.url, from: file.from, candidates: file.candidates };
+    if (!file || !file.url) return fail("file", "couldn't find the PDF behind this viewer, so this is a picture");
+    const pdf = await openPdf(file.url);
+    trace.opened = pdf ? pdf.numPages : openPdf.lastError || 0;
+    if (!pdf) return fail("open", "couldn't open the PDF behind this viewer, so this is a picture");
+    const shot = await screenshot();
+    const ratio = shot.width / innerWidth;
+    const shotCtx = new OffscreenCanvas(shot.width, shot.height).getContext("2d", { willReadFrequently: true });
+    shotCtx.drawImage(shot, 0, 0);
+    const vp1 = (await pdf.getPage(1)).getViewport({ scale: 1 });
+    const pages = pageRects(sel, docs, hit, shotCtx, ratio, vp1.width / vp1.height);
+    const r1 = (r) => [r.left, r.top, r.width, r.height].map(Math.round);
+    trace.pages = pages.map((p) => ({ full: r1(p.full), vis: r1(p.vis), via: p.via }));
+    if (!pages.length) { trace.seen = pageRects.seen; trace.aspect = Math.round(vp1.width / vp1.height * 1000) / 1000; return fail("pages", "couldn't see the pages of this viewer, so this is a picture"); }
+    const hint = toolbarPage(docs);
+    trace.toolbar = hint;
+    // number the pages: the most visible one by comparing it with the PDF, its neighbours by their position (a
+    // sliver of a page - often just the footer every slide shares - can't be told apart on its own)
+    const anchor = pages.slice().sort((a, b) => b.vis.width * b.vis.height - a.vis.width * a.vis.height)[0];
+    const match = await whichPage(pdf, anchor, shotCtx, ratio, hint);
+    trace.match = { page: match.n, scores: match.scores, anchor: pages.indexOf(anchor) };
+    if (!match.n) return fail("match", "couldn't match the screen to a page of the PDF, so this is a picture");
+    const k0 = pages.indexOf(anchor);
+    pages.forEach((pr, k) => { pr.n = match.n + (k - k0); });
+    const pieces = [], htmls = [], texts = [], used = [];
+    for (const s of sel) {
+      for (const pr of pages) {
+        const part = intersect(s, pr.vis);
+        if (!part || part.width < 4 || part.height < 4 || pr.n < 1 || pr.n > pdf.numPages) continue;
+        used.push(pr.n);
+        const page = await pdf.getPage(pr.n);
+        const view = page.view;                    // [x0, y0, x1, y1] in PDF points
+        const fx0 = (part.left - pr.full.left) / pr.full.width, fx1 = (part.right - pr.full.left) / pr.full.width;
+        const fy0 = (part.top - pr.full.top) / pr.full.height, fy1 = (part.bottom - pr.full.top) / pr.full.height;
+        const W = view[2] - view[0], H = view[3] - view[1];
+        const pdfRect = [view[0] + fx0 * W, view[3] - fy1 * H, view[0] + fx1 * W, view[3] - fy0 * H];
+        const { blob, rich } = await pdfBoxClip(page, 0, pdfRect, part.width);
+        pieces.push(blob);
+        htmls.push(rich.html);
+        texts.push(rich.text);
+      }
+    }
+    trace.used = used;
+    if (!pieces.length) return fail("layout", "the box is not over a page of the PDF, so this is a picture");
+    const text = texts.filter((t) => t.trim()).join("\n\n");
+    const png = await stack(pieces, devicePixelRatio);
+    const nums = [...new Set(used)];
+    const where = nums.length === 1 ? `page ${nums[0]}` : `pages ${nums.join(", ")}`;
+    const name = file.name || "the PDF";
+    return { png, html: text.trim() ? htmls.join("") : imgTag(await blobToDataUri(png), Math.round(sel[0].width), Math.round(sel[0].height)), text,
+             summary: `Copied ${text.trim() ? "text" : "picture"} from ${where} of ${name} · Ctrl+V`, trace,
+             save: () => saveBlob(png, fileStem(name.replace(/\.pdf$/i, "")) + ` - p${nums.join("+")} clip.png`) };
+  }
+
+  // This document and the frames it can read (Blackboard may put its viewer in one), with their offsets.
+  function frameDocs() {
+    const out = [{ doc: document, dx: 0, dy: 0, frame: null, clip: DOMRect.fromRect({ x: 0, y: 0, width: innerWidth, height: innerHeight }) }];
+    for (let k = 0; k < out.length && k < 20; k++) {
+      for (const f of out[k].doc.querySelectorAll("iframe, frame")) {
+        const r = f.getBoundingClientRect();
+        let d = null;
+        try { d = f.contentDocument; } catch (e) { /* another site */ }
+        const dx = out[k].dx + r.left + f.clientLeft, dy = out[k].dy + r.top + f.clientTop;
+        const clip = intersect(out[k].clip, DOMRect.fromRect({ x: dx, y: dy, width: f.clientWidth, height: f.clientHeight }));
+        if (d && d.documentElement && clip) out.push({ doc: d, dx, dy, frame: f, clip });
+      }
+    }
+    return out;
+  }
+  const shift = (r, d) => DOMRect.fromRect({ x: r.left + d.dx, y: r.top + d.dy, width: r.width, height: r.height });
+
+  // Is the box over a PDF viewer? A big picture, canvas or frame covering at least half of it (pictures of the
+  // pages are preferred to the frame that holds them), on a page that shows PDFs: a Blackboard course, a page that
+  // has loaded a PDF, or a "Page N of M" toolbar. Anything else is an ordinary web page.
+  function viewerUnder(box, docs) {
+    const area = box.width * box.height;
+    let best = null;
+    viewerUnder.seen = [];                          // for the trace: the big elements looked at and how much they cover
+    for (const d of docs) {
+      for (const el of d.doc.querySelectorAll("img, canvas, iframe, frame, embed, object, svg")) {
+        const r = shift(el.getBoundingClientRect(), d);
+        if (r.width < 200 || r.height < 120) continue;
+        const part = intersect(r, box);
+        const cover = part ? (part.width * part.height) / area : 0;
+        if (viewerUnder.seen.length < 12) viewerUnder.seen.push([el.tagName.toLowerCase(), ...[r.left, r.top, r.width, r.height].map(Math.round), Math.round(cover * 100) / 100]);
+        if (cover < 0.5) continue;
+        const frame = /^i?frame$/i.test(el.tagName);
+        if (!best || (best.frame && !frame) || (best.frame === frame && cover > best.cover)) best = { el, doc: d, rect: r, cover, frame };
+      }
+    }
+    if (!best) return null;
+    const pdfPage = /\/courses\/_\d+_\d+/.test(location.pathname) || toolbarPage(docs) > 0 ||
+      docs.some((d) => { try { return d.doc.defaultView.performance.getEntriesByType("resource").some((e) => /\.pdf(\?|#|$)|bbcswebdav/i.test(e.name)); } catch (e) { return false; } });
+    return pdfPage ? best : null;
+  }
+
+  // The PDF behind the viewer: the file named just above it, among the document's files (REST) and the PDFs the
+  // page has loaded.
+  async function findViewerPdf(box, docs) {
+    // the file name shown above the viewer ("Algs-04-SkipListsTreapsQS.pdf")
+    let name = "", best = -Infinity;
+    for (const d of docs) {
+      const walker = d.doc.createTreeWalker(d.doc.body || d.doc.documentElement, NodeFilter.SHOW_TEXT);
+      for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+        const fileName = /\S\.pdf$/i.test(t.data.trim()) ? t.data.trim().replace(/^[^\p{L}\p{N}]+/u, "") : "";   // without icons
+        if (!fileName || fileName.length > 200) continue;
+        const range = d.doc.createRange();
+        range.selectNodeContents(t);
+        const r = shift(range.getBoundingClientRect(), d);
+        if (r.bottom <= box.top + 4 && r.bottom > best) { best = r.bottom; name = fileName; }
+      }
+    }
+    const cands = [];
+    const add = (url, fileName) => { if (url && !cands.some((c) => c.url === url)) cands.push({ url, name: fileName || "" }); };
+    // Blackboard: the item in the address and what it holds (embedded files, attachments, its hidden body child)
+    const m = location.pathname.match(/\/courses\/(_\d+_\d+)(.*)$/);
+    if (m && globalThis.BBParse) {
+      const API = location.origin + "/learn/api/public/v1/courses/" + m[1] + "/contents/";
+      const ids = [...new Set([...(m[2] + location.search).matchAll(/_\d+_\d+/g)].map((x) => x[0]))];
+      const get = async (path) => { const r = await fetch(API + path, { credentials: "include", headers: { Accept: "application/json" } }); return r.ok ? r.json() : null; };
+      const walk = async (id, depth) => {
+        const [item, atts, kids] = await Promise.all([get(id), get(id + "/attachments"), depth < 2 ? get(id + "/children") : null]);
+        if (item && typeof item.body === "string") for (const f of BBParse.bodyLinks(item.body, location.origin).files) add(f.url, f.fileName);
+        for (const a of (atts && atts.results) || []) add(`${API}${id}/attachments/${a.id}/download`, a.fileName);
+        for (const k of (kids && kids.results) || []) await walk(k.id, depth + 1);
+      };
+      for (const id of ids.slice(0, 4)) await walk(id, 0).catch(() => {});
+    }
+    // PDFs the page (or a readable frame) has fetched or embeds
+    for (const d of docs) {
+      try {
+        for (const e of d.doc.defaultView.performance.getEntriesByType("resource")) {
+          if (/\.pdf(\?|#|$)|bbcswebdav|\/attachments\/[^/]+\/download/i.test(e.name)) add(e.name, decodeURIComponent(e.name.split(/[?#]/)[0].split("/").pop()));
+        }
+      } catch (e) { /* frame gone */ }
+      for (const el of d.doc.querySelectorAll("iframe[src], embed[src], object[data]")) {
+        const u = el.getAttribute("src") || el.getAttribute("data");
+        if (/\.pdf(\?|#|$)|bbcswebdav/i.test(u)) add(new URL(u, d.doc.baseURI).href, "");
+      }
+    }
+    const named = name && cands.filter((c) => c.name && name.toLowerCase().endsWith(c.name.toLowerCase()));
+    const pdfs = cands.filter((c) => /\.pdf$/i.test(c.name) || /\.pdf(\?|#|$)/i.test(c.url));
+    const pick = (named && named[0]) || (pdfs.length === 1 && pdfs[0]) || (cands.length === 1 && cands[0]);
+    const candidates = cands.map((c) => c.name || c.url).slice(0, 8);
+    return pick ? { url: pick.url, name: pick.name || name, from: named && named[0] ? "name above the viewer" : "only PDF", candidates }
+                : { url: null, name, candidates };
+  }
+
+  // Download (once per page view) and open with the PDF.js the extension ships.
+  const pdfCache = globalThis.__altoPdfCache || (globalThis.__altoPdfCache = new Map());
+  async function openPdf(url) {
+    if (!pdfCache.has(url)) {
+      pdfCache.set(url, (async () => {
+        let bytes = null;
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          if (r.ok) bytes = new Uint8Array(await r.arrayBuffer());
+        } catch (e) { /* another site: the extension fetches it */ }
+        if (!bytes || String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") {
+          const r = await chrome.runtime.sendMessage({ type: "clip-fetch-pdf", url });
+          bytes = r && r.base64 ? Uint8Array.fromBase64(r.base64) : null;
+        }
+        if (!bytes || String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") { openPdf.lastError = "the answer was not a PDF"; return null; }
+        const pdfjs = await import(chrome.runtime.getURL("vendor/pdfjs/build/pdf.mjs"));
+        pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/build/pdf.worker.mjs");
+        return pdfjs.getDocument({ data: bytes, fontExtraProperties: true, isEvalSupported: false,
+          standardFontDataUrl: chrome.runtime.getURL("vendor/pdfjs/web/standard_fonts/"),
+          cMapUrl: chrome.runtime.getURL("vendor/pdfjs/web/cmaps/"), cMapPacked: true,
+          wasmUrl: chrome.runtime.getURL("vendor/pdfjs/web/wasm/") }).promise;
+      })().catch((e) => { openPdf.lastError = String(e && e.message || e); return null; }));
+      while (pdfCache.size > 3) pdfCache.delete(pdfCache.keys().next().value);
+    }
+    const pdf = await pdfCache.get(url);
+    if (!pdf) pdfCache.delete(url);
+    return pdf;
+  }
+
+  // The pages on screen near the box: {full: the whole page's rectangle, vis: the part that is visible}, from the
+  // page pictures when the viewer's markup can be read, else from the screenshot (pages are lighter than the
+  // viewer's background).
+  function pageRects(sel, docs, hit, shotCtx, ratio, aspect) {
+    const area = sel.reduce((u, r) => DOMRect.fromRect({ x: Math.min(u.left, r.left), y: Math.min(u.top, r.top),
+      width: Math.max(u.right, r.right) - Math.min(u.left, r.left), height: Math.max(u.bottom, r.bottom) - Math.min(u.top, r.top) }));
+    const viewport = DOMRect.fromRect({ x: 0, y: 0, width: innerWidth, height: innerHeight });
+    const out = [];
+    pageRects.seen = [];                            // for the trace: elements looked at as pages, and why not
+    for (const d of docs) {
+      for (const el of d.doc.querySelectorAll("img, canvas, svg, embed, object")) {
+        const r = shift(el.getBoundingClientRect(), d);
+        if (pageRects.seen.length < 12 && r.width >= 150) pageRects.seen.push([el.tagName.toLowerCase(), ...[r.left, r.top, r.width, r.height].map(Math.round)]);
+        if (r.width < 150 || r.height < 80 || Math.abs(r.width / r.height - aspect) > aspect * 0.04) continue;
+        let vis = intersect(r, d.clip);
+        for (let p = el.parentElement; p && vis; p = p.parentElement) {   // clipped by scrolling containers
+          const cs = d.doc.defaultView.getComputedStyle(p);
+          if (/(auto|scroll|hidden)/.test(cs.overflow + cs.overflowY)) vis = intersect(vis, shift(p.getBoundingClientRect(), d));
+        }
+        if (vis && intersect(vis, area)) out.push({ full: r, vis, via: "markup" });
+      }
+    }
+    if (out.length) return out.sort((a, b) => a.full.top - b.full.top);
+    // from the screenshot, inside the viewer's frame (or around the box)
+    const reg = intersect(hit.el.tagName === "IFRAME" ? hit.rect : DOMRect.fromRect({ x: 0, y: area.top - 60, width: innerWidth, height: area.height + 120 }), viewport);
+    if (!reg) return [];
+    const X0 = Math.round(reg.left * ratio), Y0 = Math.round(reg.top * ratio), Wd = Math.round(reg.width * ratio), Ht = Math.round(reg.height * ratio);
+    if (Wd < 20 || Ht < 20) return [];
+    const px = shotCtx.getImageData(X0, Y0, Wd, Ht).data;
+    const at = (x, y) => (y * Wd + x) * 4;
+    // background: the most common colour of the region's left edge (the viewer's margin)
+    const tally = new Map();
+    for (let y = 0; y < Ht; y++) for (let x = 0; x < Math.min(6, Wd); x++) { const i = at(x, y); const k = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2]; tally.set(k, (tally.get(k) || 0) + 1); }
+    const bk = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const bg = [(bk >> 16) & 255, (bk >> 8) & 255, bk & 255];
+    // any channel 10+ levels away: a light-pink box (255,237,237) is not the grey margin (232,234,237)
+    const off = (x, y) => { const i = at(x, y); return Math.max(Math.abs(px[i] - bg[0]), Math.abs(px[i + 1] - bg[1]), Math.abs(px[i + 2] - bg[2])) >= 10; };
+    const cx = Math.min(Wd - 1, Math.max(0, Math.round(((area.left + area.right) / 2 - reg.left) * ratio)));
+    // the columns of a stretch of rows that hold anything, around the box's centre
+    const span = (y0, y1) => {
+      const has = (x) => { for (let y = y0; y <= y1; y += 2) if (off(x, y)) return true; return false; };
+      if (!has(cx)) return null;
+      let a = cx, b = cx;
+      while (a > 0 && has(a - 1)) a--;
+      while (b < Wd - 1 && has(b + 1)) b++;
+      return [a, b];
+    };
+    const ay0 = Math.max(0, Math.round((area.top - reg.top) * ratio)), ay1 = Math.min(Ht - 1, Math.round((area.bottom - reg.top) * ratio));
+    const cols = span(ay0, ay1);
+    if (!cols) return [];
+    // gaps between pages are pure background across the page's width; anything else (text, colour, the soft
+    // shadows Beamer draws under its blocks, which are almost the viewer's grey) is page
+    const gap = (y) => { let n = 0; for (let x = cols[0]; x <= cols[1]; x++) if (off(x, y) && ++n > 2) return false; return true; };
+    const runs = [];
+    for (let y = 0; y < Ht;) {
+      if (gap(y)) { y++; continue; }
+      let z = y;
+      while (z + 1 < Ht && !gap(z + 1)) z++;
+      runs.push([y, z]);
+      y = z + 1;
+    }
+    // a thin full-width grey line inside a slide (a title bar's shadow) looks like a gap: rows a few pixels apart
+    // are one page as long as together they are not taller than a page (its height follows from its width)
+    const pageHpx = ((cols[1] - cols[0] + 1) / aspect) * 1.02;
+    for (let k = 0; k + 1 < runs.length;) {
+      if (runs[k + 1][0] - runs[k][1] <= 5 && runs[k + 1][1] - runs[k][0] <= pageHpx) runs.splice(k, 2, [runs[k][0], runs[k + 1][1]]);
+      else k++;
+    }
+    for (const [y, z] of runs) {
+      const c = z - y > 10 && span(y, z);
+      if (c) {
+        const pageW = (c[1] - c[0] + 1) / ratio, pageH = pageW / aspect;
+        const vis = DOMRect.fromRect({ x: reg.left + c[0] / ratio, y: reg.top + y / ratio, width: pageW, height: (z - y + 1) / ratio });
+        const top = y > 0 ? vis.top : z < Ht - 1 ? vis.bottom - pageH : vis.top;   // a page cut by the frame's top: from its bottom
+        const full = DOMRect.fromRect({ x: vis.left, y: top, width: pageW, height: pageH });
+        if (intersect(vis, area)) out.push({ full, vis, via: "screenshot" });
+      }
+    }
+    return out;
+  }
+
+  // The page number the viewer's toolbar shows ("Page [11] of 51"), a first guess.
+  function toolbarPage(docs) {
+    for (const d of docs) {
+      for (const inp of d.doc.querySelectorAll("input")) {
+        if (/^\d+$/.test(inp.value) && /of\s*\d+/i.test((inp.parentElement && inp.parentElement.textContent) || "")) return parseInt(inp.value, 10);
+      }
+    }
+    return 0;
+  }
+
+  // Which page of the PDF is in this rectangle: the screen compared with small renders of candidate pages (the
+  // toolbar's page and its neighbours first, then every page).
+  const thumbs = new WeakMap();
+  async function whichPage(pdf, pr, shotCtx, ratio, hint) {
+    const TW = 240;
+    const th = Math.round(TW * pr.full.height / pr.full.width);
+    // the screen, at thumbnail size, where the page is visible
+    const sc = new OffscreenCanvas(TW, th).getContext("2d", { willReadFrequently: true });
+    sc.imageSmoothingQuality = "high";
+    sc.fillStyle = "#fff";
+    sc.fillRect(0, 0, TW, th);
+    sc.drawImage(shotCtx.canvas, pr.full.left * ratio, pr.full.top * ratio, pr.full.width * ratio, pr.full.height * ratio, 0, 0, TW, th);
+    const screen = sc.getImageData(0, 0, TW, th).data;
+    const y0 = Math.max(0, Math.floor((pr.vis.top - pr.full.top) / pr.full.height * th)), y1 = Math.min(th, Math.ceil((pr.vis.bottom - pr.full.top) / pr.full.height * th));
+    let cache = thumbs.get(pdf);
+    if (!cache) thumbs.set(pdf, (cache = new Map()));
+    const score = async (n) => {
+      if (!cache.has(n)) {
+        const page = await pdf.getPage(n);
+        const vp = page.getViewport({ scale: TW / page.getViewport({ scale: 1 }).width });
+        const c = document.createElement("canvas");
+        c.width = TW; c.height = th;
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp, background: "white" }).promise;
+        cache.set(n, c.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TW, th).data);
+      }
+      const t = cache.get(n);
+      let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0, k = 0;
+      for (let y = y0; y < y1; y++) for (let x = 0; x < TW; x++) {
+        const i = (y * TW + x) * 4;
+        const p = screen[i] * 0.3 + screen[i + 1] * 0.59 + screen[i + 2] * 0.11, q = t[i] * 0.3 + t[i + 1] * 0.59 + t[i + 2] * 0.11;
+        sa += p; sb += q; saa += p * p; sbb += q * q; sab += p * q; k++;
+      }
+      if (!k) return 0;
+      const cov = sab - sa * sb / k, va = saa - sa * sa / k, vb = sbb - sb * sb / k;
+      return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : 0;
+    };
+    const order = [];
+    const push = (n) => { if (n >= 1 && n <= pdf.numPages && !order.includes(n)) order.push(n); };
+    if (hint) for (const n of [hint, hint + 1, hint - 1, hint + 2, hint - 2]) push(n);
+    // a match is a page clearly closer to the screen than every other (the screen is a resampled picture, so
+    // even the right page is far from a perfect 1)
+    const all = new Map();
+    for (const n of order) all.set(n, await score(n));
+    const sorted = () => [...all.entries()].sort((a, b) => b[1] - a[1]);
+    let [best, second] = sorted();
+    if (!best || best[1] < 0.85 || (second && best[1] - second[1] < 0.3) || !second) {
+      for (let n = 1; n <= Math.min(pdf.numPages, 400); n++) if (!all.has(n)) all.set(n, await score(n));
+      [best, second] = sorted();
+    }
+    const scores = sorted().slice(0, 4).map(([n, v]) => [n, Math.round(v * 100) / 100]);
+    if (!best) return { n: 0, scores };
+    // clearly ahead, or - for slides sharing a template, where every score is high - ahead by a small but real margin
+    const ahead = !second || best[1] - second[1] >= 0.15 || (best[1] >= 0.9 && best[1] - second[1] >= 0.02);
+    if (best[1] >= 0.45 && ahead) return { n: best[0], scores };
+    // pages that look alike: the toolbar's page decides, when it is one of them
+    const h = hint && all.get(hint);
+    if (h !== undefined && h >= 0.9 && best[1] - h <= 0.02) return { n: hint, scores, by: "toolbar" };
+    return { n: 0, scores };
   }
 
   // Text items of a PDF.js text layer inside `sel` (client coords), in page CSS pixels with y growing upwards.
@@ -753,19 +1108,8 @@
     for (const { n, pdfRect, cssWidth } of boxes) {
       const page = await app.pdfDocument.getPage(n);
       const rotation = app.pdfViewer.getPageView(n - 1).viewport.rotation;
-      const v1 = page.getViewport({ scale: 1, rotation });
-      const [a, b] = v1.convertToViewportPoint(pdfRect[0], pdfRect[1]);
-      const [c, d] = v1.convertToViewportPoint(pdfRect[2], pdfRect[3]);
-      const box1 = { x: Math.min(a, c), y: Math.min(b, d), w: Math.abs(c - a), h: Math.abs(d - b) };
-      // Same pixel size as the box on screen (Chrome drops DPI tags, so pixels decide the pasted size).
-      const scale = (cssWidth * devicePixelRatio) / box1.w;
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(box1.w * scale));
-      canvas.height = Math.max(1, Math.round(box1.h * scale));
-      await page.render({ canvasContext: canvas.getContext("2d"), viewport: page.getViewport({ scale, rotation }),
-                          background: "white", transform: [1, 0, 0, 1, -box1.x * scale, -box1.y * scale] }).promise;
-      pieces.push(await new Promise((r) => canvas.toBlob(r, "image/png")));
-      const rich = await pdfRich(page, pdfRect, { canvas, box1, scale, v1 });
+      const { blob, rich } = await pdfBoxClip(page, rotation, pdfRect, cssWidth);
+      pieces.push(blob);
       texts.push(rich.text);
       htmls.push(rich.html);
     }
@@ -778,6 +1122,24 @@
     const title = (document.title || "document").replace(/\.pdf$/i, "");
     const save = () => savePdfCrop(app, boxes, `${fileStem(title)} - p${pages.join("+")} clip.pdf`);
     return { png, html, text, summary, save };
+  }
+
+  // One box of a PDF page (PDF points): the box rendered at the size it has on screen, and its formatted text.
+  // Shared by the built-in reader and PDFs shown in a web page's own viewer (Blackboard).
+  async function pdfBoxClip(page, rotation, pdfRect, cssWidth) {
+    const v1 = page.getViewport({ scale: 1, rotation });
+    const [a, b] = v1.convertToViewportPoint(pdfRect[0], pdfRect[1]);
+    const [c, d] = v1.convertToViewportPoint(pdfRect[2], pdfRect[3]);
+    const box1 = { x: Math.min(a, c), y: Math.min(b, d), w: Math.abs(c - a), h: Math.abs(d - b) };
+    // Same pixel size as the box on screen (Chrome drops DPI tags, so pixels decide the pasted size).
+    const scale = (cssWidth * devicePixelRatio) / box1.w;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(box1.w * scale));
+    canvas.height = Math.max(1, Math.round(box1.h * scale));
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: page.getViewport({ scale, rotation }),
+                        background: "white", transform: [1, 0, 0, 1, -box1.x * scale, -box1.y * scale] }).promise;
+    const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+    return { blob, rich: await pdfRich(page, pdfRect, { canvas, box1, scale, v1 }) };
   }
 
   // Rebuilds the text inside a PDF box as formatted HTML, the way PyMuPDF / pdfplumber reconstruct layout:
@@ -1612,5 +1974,6 @@
     }
   }
 
-  globalThis.altoClip = { start, extract };
+  // the viewer stages on their own, for tests/viewer_stages.py
+  globalThis.altoClip = { start, extract, stages: { frameDocs, viewerUnder, findViewerPdf, openPdf, pageRects, whichPage, toolbarPage } };
 })();

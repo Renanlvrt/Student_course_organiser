@@ -174,7 +174,7 @@ async function startClip(tab) {
     return;
   }
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["clip.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["bbparse.js", "clip.js"] });   // bbparse: Blackboard viewers
     await chrome.scripting.executeScript({ target: { tabId }, func: () => globalThis.altoClip.start() });
   } catch (e) {
     if (await isPdf(tab.url || "")) {
@@ -200,6 +200,16 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "clip-shot" && sender.tab) {
     chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
       .then((dataUrl) => reply({ dataUrl }), (e) => reply({ error: String(e && e.message || e) }));
+    return true;
+  }
+  if (msg.type === "clip-fetch-pdf") {              // a viewer's PDF on another site: fetched with the extension's access
+    (async () => {
+      try {
+        const r = await fetch(msg.url, { credentials: "include" });
+        const bytes = new Uint8Array(await r.arrayBuffer());
+        reply(r.ok ? { base64: bytes.toBase64() } : { error: `HTTP ${r.status}` });
+      } catch (e) { reply({ error: String(e && e.message || e) }); }
+    })();
     return true;
   }
   if (msg.type === "clip-save") {
