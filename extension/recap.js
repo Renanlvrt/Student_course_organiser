@@ -9,6 +9,7 @@ let batch = null;
 let tax = null;
 let entries = [];          // app entries belonging to this batch
 let pollUntil = Date.now() + 120000;
+let waiting = [];                                  // downloaded, but the organiser has no entry for it (yet)
 
 async function api(path, body) {
   const r = await fetch(APP + path, body ? { method: "POST", headers: { "Content-Type": "application/json" },
@@ -59,14 +60,15 @@ async function refresh() {
     const k = (e.original_name || "").toLowerCase();
     if (!byName[k]) byName[k] = e;
   }
-  for (const d of batch.done) {
-    if (!d.ok) continue;
+  waiting = [];
+  batch.done.forEach((d, i) => {
+    if (!d.ok) return;
     const base = (d.path ? d.path.split(/[\\/]/).pop() : d.name || "").toLowerCase();
     const e = (d.path && byPath[d.path.toLowerCase()]) || byName[base];
-    if (e) entries.push(e); else pending++;
-  }
+    if (e) entries.push(e); else { pending++; waiting.push(i); }
+  });
   render(pending);
-  if (pending && Date.now() < pollUntil) setTimeout(refresh, 2000);
+  if (pending && Date.now() < pollUntil) setTimeout(refresh, Math.min(2000, pollUntil - Date.now() + 100));   // last pass shows what never sorted
 }
 
 // What a folder path means as a destination, e.g. ["Crypto","Symmetric Cryptography","Lectures","Lecture 03 - X"].
@@ -126,7 +128,24 @@ function render(pending) {
         ${d.url ? `<button class="retry" data-idx="${i}">Retry</button>` : `<span>scan again to retry</span>`}</div>`;
     }).join("")}</div>` + html;
   }
+  // Downloaded but never sorted (after waiting): named in red, never left to go unnoticed.
+  if (waiting.length && Date.now() >= pollUntil) {
+    html = `<div class="failbox"><div class="failhead">✕ ${waiting.length} downloaded but not sorted (still in Downloads)
+        <button class="sort-all">Sort now</button></div>${waiting.map((i) => `<div class="failrow"><b>${esc(batch.done[i].name)}</b>
+        <span>${esc(batch.done[i].path || "")}</span></div>`).join("")}</div>` + html;
+  }
   $("tree").innerHTML = html;
+  const sortAll = document.querySelector("button.sort-all");
+  if (sortAll) sortAll.onclick = async () => {
+    sortAll.disabled = true;
+    for (const i of waiting) {
+      const d = batch.done[i];
+      if (d.path) await api("/context", { ...(d.ctx || {}), path: d.path, url: d.url }).catch(() => null);
+    }
+    toast("Sorting…");
+    pollUntil = Date.now() + 30000;
+    await refresh();
+  };
   for (const b of document.querySelectorAll("button.retry")) b.onclick = () => retry([parseInt(b.dataset.idx, 10)], b);
   const all = document.querySelector("button.retry-all");
   if (all) all.onclick = () => retry(failedIdx.filter((i) => batch.done[i].url), all);

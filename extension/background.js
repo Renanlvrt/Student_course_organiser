@@ -204,8 +204,8 @@ chrome.downloads.onChanged.addListener(async (delta) => {
 // A finished queue item: record it and move on.
 async function settle(q, result) {
   const f = q.files[q.index];
-  q.done = (q.done || []).concat([{ name: f.fileName || (f.ctx && f.ctx.link_text) || "file", ...result,
-                                    ...(result.ok ? {} : { url: f.url, key: f.key, ctx: f.ctx }) }]);
+  q.done = (q.done || []).concat([{ name: f.fileName || (f.ctx && f.ctx.link_text) || "file", ...result, ctx: f.ctx,
+                                    ...(result.ok ? {} : { url: f.url, key: f.key }) }]);
   if (!result.ok) q.failed = (q.failed || 0) + 1;
   q.index += 1;
   q.currentId = null;

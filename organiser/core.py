@@ -145,7 +145,8 @@ class Organiser:
         return self.active
 
     # ---------------------------------------------------------------- detection
-    def is_candidate(self, path):
+    def is_candidate(self, path, any_type=False):
+        """any_type: a download the extension asked for is sorted whatever its type (never left behind)."""
         p = Path(path)
         name = p.name
         if name.startswith(("~$", ".~", "~")) or name.lower() in ("desktop.ini", "thumbs.db"):
@@ -153,7 +154,7 @@ class Organiser:
         ext = p.suffix.lower()
         if ext in TEMP_EXTS:
             return False
-        return ext in self.cfg.file_types
+        return any_type or ext in self.cfg.file_types
 
     def _seen(self, path, touch_only=False):
         if not self.active or not self.is_candidate(path):
@@ -232,7 +233,7 @@ class Organiser:
     def _process_tagged(self, path, ctx):
         """A download started from the extension is an explicit 'organise this': sort it even when Alt+O is off."""
         src = Path(path)
-        if not self.is_candidate(src) or norm(src.parent) != norm(self.cfg.downloads_folder):
+        if not self.is_candidate(src, any_type=True) or norm(src.parent) != norm(self.cfg.downloads_folder):
             return
         last, since, end = -1, time.time(), time.time() + 60
         while True:                                  # wait until the file exists and stops growing
