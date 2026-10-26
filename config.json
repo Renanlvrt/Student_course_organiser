@@ -6,7 +6,7 @@
   "gemini_model": "gemini-3.5-flash",
   "gemini_fallback_model": "gemini-flash-lite-latest",
   "port": 47821,
-  "file_types": [".pdf", ".pptx", ".docx", ".py", ".ipynb", ".c", ".h", ".zip", ".txt", ".md", ".csv"],
+  "file_types": [".pdf", ".pptx", ".docx", ".py", ".ipynb", ".c", ".h", ".zip", ".txt", ".md", ".csv", ".html"],
   "part_categories": ["Lectures", "Practicals", "Solutions", "Readings"],
   "module_categories": ["Assessment", "Exam Prep", "Other"],
   "part_extra_folders": ["Website"],

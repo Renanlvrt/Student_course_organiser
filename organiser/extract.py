@@ -25,6 +25,8 @@ def extract(path):
             return _ipynb(path)
         if ext == ".zip":
             return _zip(path)
+        if ext in (".html", ".htm"):
+            return _html(path)
         return path.read_text(encoding="utf-8", errors="ignore")[:MAX_CHARS], ""
     except ExtractError:
         raise
@@ -117,3 +119,14 @@ def _zip(path):
             raise ExtractError(f"corrupt member {bad}")
         names = z.namelist()
     return "ZIP archive containing:\n" + "\n".join(names[:80]), ""
+
+
+def _html(path):
+    """Blackboard pages saved by the extension: their words and <title> (tags and styles stripped)."""
+    import html as htmlmod
+    import re
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    m = re.search(r"<title>(.*?)</title>", raw, re.S | re.I)
+    body = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw, flags=re.S | re.I)
+    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", body))
+    return re.sub(r"\s+", " ", text).strip()[:MAX_CHARS], htmlmod.unescape(m.group(1).strip()) if m else ""

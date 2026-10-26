@@ -40,15 +40,22 @@ async function init() {
     $("content").innerHTML = `<div class="err">${esc(info ? info.error : "No response")}</div>`;
     return;
   }
+  // Ticked sections: the ones picked last time for this course, else every section but the admin ones
+  // (announcements, discussions, staff...) - courses lay out lectures, practicals and terms in many ways.
+  const key = `ticks:${info.courseId}`;
+  const saved = (await chrome.storage.local.get(key))[key];
+  const ADMIN = /announce|discussion|forum|contact|staff|teaching team|calendar|grade|mark ?book|journal|blog|wiki|groups?$|email|messages|help|support|tools|panopto|recording|attendance|feedback survey|evaluation/i;
+  const ticked = new Set(saved || info.sections.filter((s) => !ADMIN.test(s.title)).map((s) => s.id));
   const warn = !status ? `<div class="warn">The organiser app isn't running: files will just stay in Downloads.</div>`
     : `<div class="muted" style="margin-top:6px">Files downloaded from here are sorted automatically (no need for Alt+O).</div>`;
   $("content").innerHTML = `
     <div class="course">${esc(info.course.course_name)}</div>
     <div class="muted">${esc(info.course.course_code)}</div>
     ${warn}
-    <div class="muted" style="margin-top:8px">Pick sections, then scan for files you don't have yet:</div>
+    <div class="muted" style="margin-top:8px">Pick sections, then scan for files you don't have yet
+      (<a href="#" id="all">all</a> · <a href="#" id="none">none</a>):</div>
     <ul id="secs">${info.sections.map((s) => `
-      <li data-id="${esc(s.id)}"><input type="checkbox"><span>${esc(s.title)}</span><span class="n"></span></li>`).join("")}
+      <li data-id="${esc(s.id)}"><input type="checkbox" ${ticked.has(s.id) ? "checked" : ""}><span>${esc(s.title)}</span><span class="n"></span></li>`).join("")}
     </ul>
     <button id="scan">Scan selected sections</button>
     <div id="result"></div>`;
@@ -58,6 +65,9 @@ async function init() {
       if (ev.target !== cb) cb.checked = !cb.checked;
     });
   }
+  const tickAll = (on) => (ev) => { ev.preventDefault(); for (const cb of document.querySelectorAll("#secs input")) cb.checked = on; };
+  $("all").addEventListener("click", tickAll(true));
+  $("none").addEventListener("click", tickAll(false));
   $("scan").addEventListener("click", scan);
   watchQueue();
 }
@@ -65,6 +75,7 @@ async function init() {
 async function scan() {
   const ids = [...document.querySelectorAll("#secs li")].filter((li) => li.querySelector("input").checked).map((li) => li.dataset.id);
   if (!ids.length) { $("result").innerHTML = `<div class="warn">Tick at least one section.</div>`; return; }
+  chrome.storage.local.set({ [`ticks:${info.courseId}`]: ids });
   $("scan").disabled = true;
   $("result").innerHTML = `<div class="muted">Scanning (opening folders)…</div>`;
   const res = await send({ type: "collect", courseId: info.courseId, sectionIds: ids });

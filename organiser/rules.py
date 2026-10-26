@@ -100,9 +100,9 @@ def part_from_keywords(mod, text):
     return best, min(0.85, 0.5 + 0.1 * margin)
 
 
-PART_NUM_RE = [
-    (1, re.compile(r"\b(?:part|term|submodule)\s*(?:2|ii|two)\b")),
-    (0, re.compile(r"\b(?:part|term|submodule)\s*(?:1|i|one)\b")),
+PART_NUM_RE = [   # "Term 2", "Term2 [Security]", "Part II", Durham's "Epiphany" / "Michaelmas" terms
+    (1, re.compile(r"\b(?:(?:part|term|submodule)\s*(?:2|ii|two)\b|epiphany)")),
+    (0, re.compile(r"\b(?:(?:part|term|submodule)\s*(?:1|i|one)\b|michaelmas)")),
 ]
 
 

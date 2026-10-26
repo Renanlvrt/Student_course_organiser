@@ -6,11 +6,31 @@
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim().slice(0, 400);   // full citations
 
   // Turn a link into something chrome.downloads can fetch, or null if it is a web page.
+  // Ultra stores embedded files as "@X@EmbeddedFile.requestUrlStub@X@bbcswebdav/xid-123_1".
+  function resolve(href, origin) {
+    return (href || "").replace(/@X@EmbeddedFile\.(requestUrlStub|location)@X@/g, origin.replace(/\/$/, "") + "/");
+  }
+
+  // Share links that are really files: SharePoint / OneDrive, Google Drive, Dropbox -> their direct download.
+  function shareDownload(u) {
+    if (/(^|\.)sharepoint\.com$|(^|\.)1drv\.ms$|onedrive\.live\.com$/.test(u.hostname) && /\/:[bwpxt]:\//.test(u.pathname)) {
+      const d = new URL(u.href); d.searchParams.set("download", "1"); return d.href;
+    }
+    let m = u.href.match(/^https:\/\/drive\.google\.com\/file\/d\/([^/]+)/) || u.href.match(/^https:\/\/drive\.google\.com\/open\?id=([^&]+)/);
+    if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+    m = u.href.match(/^https:\/\/docs\.google\.com\/(document|presentation|spreadsheets)\/d\/([^/]+)/);
+    if (m) return `https://docs.google.com/${m[1]}/d/${m[2]}/export?format=${m[1] === "spreadsheets" ? "xlsx" : m[1] === "presentation" ? "pptx" : "docx"}`;
+    if (/(^|\.)dropbox\.com$/.test(u.hostname)) { const d = new URL(u.href); d.searchParams.set("dl", "1"); return d.href; }
+    return null;
+  }
+
   function toDownloadable(href, origin) {
     let u;
-    try { u = new URL(href, origin); } catch (e) { return null; }
+    try { u = new URL(resolve(href, origin), origin); } catch (e) { return null; }
     if (!/^https?:$/.test(u.protocol)) return null;
     if (/bbcswebdav|\/attachments\/.+\/download/.test(u.pathname)) return u.href;
+    const shared = shareDownload(u);
+    if (shared) return shared;
     // Colab pages are web apps, not files: use the notebook behind them (gist / GitHub), else skip.
     let m = u.href.match(/^https:\/\/colab\.research\.google\.com\/gist\/([^/]+)\/([0-9a-f]+)\/([^?#]+\.ipynb)/);
     if (m) return `https://gist.githubusercontent.com/${m[1]}/${m[2]}/raw/${m[3]}`;
@@ -47,8 +67,9 @@
     let name = "";
     const bb = a.getAttribute("data-bbfile");
     if (bb) {
-      try { name = JSON.parse(bb).linkName || ""; } catch (e) { /* ignore */ }
+      try { const j = JSON.parse(bb); name = j.linkName || j.displayName || j.fileName || ""; } catch (e) { /* ignore */ }
     }
+    if (!name) name = a.getAttribute("download") || "";
     if (!name) {
       try { name = decodeURIComponent(new URL(url).pathname.split("/").pop() || ""); } catch (e) { name = ""; }
     }
@@ -59,6 +80,12 @@
     const doc = new DOMParser().parseFromString(html || "", "text/html");
     const files = [];
     const skipped = [];
+    // files shown inside the page (images, embedded viewers, videos) count too
+    for (const el of doc.querySelectorAll("img[src], embed[src], iframe[src], source[src], video[src], object[data]")) {
+      const src = el.getAttribute("src") || el.getAttribute("data");
+      const url = /bbcswebdav/.test(src || "") ? toDownloadable(src, origin) : null;
+      if (url) files.push({ url, fileName: fileNameFor(el, url), line: lineOf(el), linkText: clean(el.getAttribute("alt") || el.getAttribute("title") || "") });
+    }
     for (const a of doc.querySelectorAll("a[href]")) {
       const href = a.getAttribute("href");
       const linkText = clean(a.textContent);
@@ -72,5 +99,5 @@
     return { files, skipped };
   }
 
-  root.BBParse = { bodyLinks, toDownloadable, lineOf };
+  root.BBParse = { bodyLinks, toDownloadable, lineOf, resolve };
 })(typeof window !== "undefined" ? window : globalThis);

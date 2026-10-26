@@ -97,6 +97,17 @@ class Classify(unittest.TestCase):
         self.assertEqual((c.module, c.part, c.category, c.number), ("Crypto", 1, "Lectures", 12))
         self.assertGreaterEqual(c.confidence, 0.7)
 
+    def test_other_course_layouts(self):
+        """Terms, weeks and practicals-only sections, however a course nests them (innermost first)."""
+        cfg = load_config()
+        course = {"course_code": "COMP3731_2026", "course_name": "Cryptography (26/27)"}
+        for chain, part in ((["Practical 3", "Practicals", "Term2 [Crypto]"], 1),
+                            (["Practical 3", "Week 15", "Epiphany term"], 1),
+                            (["Practical 3", "Practicals", "Michaelmas"], 0)):
+            c = classify(cfg, "sheet.pdf", "", "", context={**course, "chain": chain, "item_title": "Exercises"},
+                         use_ai=False, when=datetime(2026, 10, 1))
+            self.assertEqual((c.part, c.category), (part, "Practicals"), chain)
+
     def test_manual_pick_and_prefix(self):
         cfg = load_config()
         c = classify(cfg, "dl-lecture1.pdf", "Introduction to deep learning neural networks", "Intro", use_ai=False)

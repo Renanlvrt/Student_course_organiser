@@ -53,6 +53,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     })();
     return false;
   }
+  if (msg.type === "probe") {                      // is this link a file? (content type / attachment name)
+    probeLink(msg.url).then(reply);
+    return true;
+  }
   if (msg.type === "ensureApp") {
     ensureApp().then((ok) => reply({ ok }));
     return true;
@@ -67,6 +71,27 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   return false;
 });
+
+const FILE_TYPES = /pdf|msword|officedocument|powerpoint|ms-excel|zip|octet-stream|ipynb|x-python|text\/x-|text\/plain|text\/csv|text\/markdown/i;
+async function probeLink(url) {
+  for (const method of ["HEAD", "GET"]) {
+    try {
+      const ctl = new AbortController();
+      const res = await fetch(url, { method, credentials: "include", redirect: "follow", signal: ctl.signal });
+      const type = res.headers.get("content-type") || "";
+      const disp = res.headers.get("content-disposition") || "";
+      ctl.abort();                                   // headers are enough
+      if (!res.ok && method === "HEAD") continue;
+      const m = disp.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      const fileName = m ? decodeURIComponent(m[1]) : decodeURIComponent(new URL(res.url).pathname.split("/").pop() || "");
+      const file = (/attachment/i.test(disp) || FILE_TYPES.test(type)) && !/text\/html/i.test(type);
+      const ext = (type.match(/pdf|zip|csv|markdown|x-python|ipynb/) || [""])[0].replace("markdown", "md").replace("x-python", "py") ||
+        (/wordprocessingml|msword/.test(type) ? "docx" : /presentationml|powerpoint/.test(type) ? "pptx" : /text\/plain/.test(type) ? "txt" : "");
+      return { file, url: res.url, fileName, ext: ext ? "." + ext : "", type };
+    } catch (e) { /* try GET */ }
+  }
+  return { file: false };
+}
 
 // ---- tagging every download that comes from Blackboard ------------------------------
 // The context lookup (REST calls) can take longer than a small download, so onCreated

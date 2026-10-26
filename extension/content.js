@@ -124,12 +124,30 @@
     return { courseId, course, sections: top.map((c) => ({ id: c.id, title: clean(c.title), folder: !!c.hasChildren })) };
   }
 
-  // The page text (HTML body) of an item. The list endpoint does not always include it.
-  async function bodyOf(courseId, node) {
-    if (typeof node.body === "string") return node.body;
-    const handler = (node.contentHandler && node.contentHandler.id) || "";
-    if (!/document|lesson|ultra/i.test(handler) && !/^ultra\s*document\s*body/i.test(node.title || "")) return "";
-    try { return (await api(`/v1/courses/${courseId}/contents/${node.id}`)).body || ""; } catch (e) { return ""; }
+  // The full item (body, handler details). The list endpoint does not always include the body, so every
+  // item is fetched on its own - whatever its type - so nothing written in a page can be missed.
+  async function fullItem(courseId, node) {
+    if (typeof node.body === "string") return node;
+    try {
+      const full = await api(`/v1/courses/${courseId}/contents/${node.id}`);
+      // keep what the list already said (link address, target) when the details leave it out
+      return { ...node, ...full, contentHandler: { ...(node.contentHandler || {}), ...(full.contentHandler || {}) } };
+    } catch (e) { return node; }
+  }
+
+  // Ask the server what a link really is (a link with no file extension can still be a PDF).
+  async function probe(url) {
+    try { return await chrome.runtime.sendMessage({ type: "probe", url }); } catch (e) { return null; }
+  }
+
+  // A text-only page (instructions written straight into Blackboard) saved as an .html file.
+  function pageFile(courseId, node, html, ctx) {
+    const title = clean(node.title) || "Page";
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><base href="${location.origin}/"><title>${title.replace(/</g, "&lt;")}</title>` +
+      `<style>body{font-family:Segoe UI,Arial,sans-serif;max-width:860px;margin:32px auto;line-height:1.5;padding:0 16px}</style></head>` +
+      `<body><h1>${title.replace(/</g, "&lt;")}</h1>${BBParse.resolve(html, location.origin)}</body></html>`;
+    return { key: `${courseId}:page:${node.id}`, url: "data:text/html;charset=utf-8," + encodeURIComponent(doc),
+             fileName: `${title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 150)}.html`, ctx, page: true };
   }
 
   async function collect(courseId, sectionIds) {
@@ -139,39 +157,59 @@
     const seen = new Set();
     const top = await listAll(`/v1/courses/${courseId}/contents`);
     const queue = top.filter((c) => sectionIds.includes(c.id)).map((c) => ({ node: c, chain: [] }));
-    for (let guard = 0; queue.length && guard < 2000; guard++) {
+    const visited = new Set();
+    for (let guard = 0; queue.length && guard < 3000; guard++) {
       const { node, chain } = queue.shift();
+      if (visited.has(node.id)) continue;
+      visited.add(node.id);
       const title = clean(node.title);
       // Files embedded in Ultra documents sit under an internal "ultraDocumentBody" item: not a real title.
       const junk = /^ultra\s*document\s*body/i.test(title);
       const ctx = { ...course, item_title: junk ? "" : title, chain, source: "rest" };
       const innerChain = junk ? chain : [title, ...chain];
-      if (node.hasChildren) {
+      const item = await fullItem(courseId, node);
+      const handler = (item.contentHandler && item.contentHandler.id) || "";
+      const before = files.length;
+      // Children: folders, lessons, and documents too (Ultra keeps a document's files in child items).
+      if (node.hasChildren || /document|lesson|folder|assignment/i.test(handler)) {
         let kids = [];
-        try { kids = await listAll(`/v1/courses/${courseId}/contents/${node.id}/children`); } catch (e) { /* hidden */ }
+        try { kids = await listAll(`/v1/courses/${courseId}/contents/${node.id}/children`); } catch (e) { /* none / hidden */ }
         for (const k of kids) queue.push({ node: k, chain: innerChain });
-      } else {
-        let atts = [];
-        try { atts = await listAll(`/v1/courses/${courseId}/contents/${node.id}/attachments`); } catch (e) { /* none */ }
-        for (const a of atts) {
-          files.push({
-            key: `${courseId}:${a.id}`,
-            url: `${API}/v1/courses/${courseId}/contents/${node.id}/attachments/${a.id}/download`,
-            fileName: a.fileName,
-            ctx,
-          });
-        }
+      }
+      // A link to another item of the course: collect that item as well.
+      const target = item.contentHandler && (item.contentHandler.targetId || item.contentHandler.target_id);
+      if (target && !visited.has(target)) {
+        try { queue.push({ node: await api(`/v1/courses/${courseId}/contents/${target}`), chain: innerChain }); } catch (e) { /* gone */ }
+      }
+      // Attachments: asked for every item, whatever its type.
+      let atts = [];
+      try { atts = await listAll(`/v1/courses/${courseId}/contents/${node.id}/attachments`); } catch (e) { /* none */ }
+      for (const a of atts) {
+        files.push({ key: `${courseId}:${a.id}`, url: `${API}/v1/courses/${courseId}/contents/${node.id}/attachments/${a.id}/download`,
+                     fileName: a.fileName, ctx });
       }
       // Links written in the page itself: "Lecture 3: Designing architectures (slides, encoder, …)".
-      const { files: linked, skipped: notFiles } = BBParse.bodyLinks(await bodyOf(courseId, node), location.origin);
-      for (const f of linked) {
-        files.push({
-          key: `${courseId}:${f.url}`, url: f.url, fileName: f.fileName,
-          ctx: { ...course, item_title: f.line || ctx.item_title, link_text: f.linkText,
-                 chain: junk ? chain : [title, ...chain], source: "rest" },
-        });
+      const body = typeof item.body === "string" ? item.body : "";
+      const extUrl = item.contentHandler && item.contentHandler.url;
+      const html = body + (extUrl ? `<p><a href="${extUrl}">${title}</a></p>` : "");
+      const { files: linked, skipped: notFiles } = BBParse.bodyLinks(html, location.origin);
+      const linkCtx = (f) => ({ ...course, item_title: f.line || ctx.item_title, link_text: f.linkText,
+                                chain: junk ? chain : [title, ...chain], source: "rest" });
+      for (const f of linked) files.push({ key: `${courseId}:${f.url}`, url: f.url, fileName: f.fileName, ctx: linkCtx(f) });
+      // Links with no file extension: ask the server; documents behind them are downloaded too.
+      for (const k of notFiles) {
+        const r = /^https?:/i.test(k.href) ? await probe(new URL(BBParse.resolve(k.href, location.origin), location.origin).href) : null;
+        if (r && r.file) {                          // named so the organiser knows its type: "Exam notes.pdf"
+          const named = /\.[a-z0-9]{2,5}$/i.test(r.fileName || "") ? r.fileName : `${(k.text || r.fileName || "file").replace(/[<>:"/\\|?*]/g, "_")}${r.ext || ""}`;
+          files.push({ key: `${courseId}:${r.url}`, url: r.url, fileName: named, ctx: linkCtx({ ...k, linkText: k.text }) });
+        }
+        else skipped.push({ ...k, section: title });
       }
-      for (const k of notFiles) skipped.push({ ...k, section: title });
+      // A page with words but no file at all: keep the page itself rather than miss it.
+      const words = body.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").trim();
+      if (files.length === before && !junk && !node.hasChildren && words.length > 40 && !/folder/i.test(handler)) {
+        files.push(pageFile(courseId, item, body, ctx));
+      }
     }
     return { files: files.filter((f) => !seen.has(f.key) && seen.add(f.key)), skipped };
   }
