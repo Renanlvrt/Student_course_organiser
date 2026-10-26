@@ -90,32 +90,48 @@ async function scan() {
   } catch (e) { /* app not running */ }
   found = res.files.filter((f) => !done[f.key] && !have.has((f.fileName || "").toLowerCase()));
   const skipped = res.files.length - found.length;
-  const addBtn = (where, n, k) => k && (k.href || (k.add && k.add.href))
-    ? `<button class="add" data-where="${where}" data-n="${n}" title="Add to the downloads">+</button>` : "";
+  // Every checked item (and skipped link) can be put in or taken out of the downloads: its files, everything
+  // inside a folder, a link's repository/page, or the page itself.
+  const tree = res.tree || {};
+  const under = (id, top) => { for (let n = id, g = 0; n && g < 50; n = tree[n], g++) if (n === top) return true; return false; };
+  const extra = (k) => k.add ? (k.add.file || linkDownload(k.add)) : k.href ? linkDownload(k) : null;
+  const filesOf = (where, k) => where === "skipped" ? [extra(k)]
+    : res.files.filter((f) => under(f.from, k.id)).concat(k.add ? [extra(k)] : []);
+  const rows = { scanned: res.scanned || [], skipped: res.skipped || [] };
+  const pick = {};                                   // "where:n" -> its downloadables (worked out once)
+  const addBtn = (where, n, k) => {
+    const list = pick[`${where}:${n}`] = filesOf(where, k).filter(Boolean);
+    return list.length ? `<button class="add" data-where="${where}" data-n="${n}"></button>` : "";
+  };
   $("result").innerHTML = `
     <div class="muted" style="margin-top:8px">${res.files.length} file(s) found · <b style="color:var(--fg)">${found.length} new</b>${skipped ? ` · ${skipped} already downloaded` : ""}</div>
     <ul id="found"></ul>
     <button id="go"></button>
-    ${(res.scanned || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.scanned.length} item(s) checked</summary>
-      <ul>${res.scanned.map((k, n) => `<li style="cursor:default"><span>${esc(k.title)}</span><span class="n">${k.page ? "page saved" : k.files ? `${k.files} file(s)` : esc(k.kind || "")}</span>${addBtn("scanned", n, k)}</li>`).join("")}</ul></details>` : ""}
-    ${(res.skipped || []).length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${res.skipped.length} web link(s) skipped (Colab, blogs, web pages, not files)</summary>
-      <ul>${res.skipped.slice(0, 40).map((k, n) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span>${addBtn("skipped", n, k)}</li>`).join("")}</ul></details>` : ""}`;
+    ${rows.scanned.length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${rows.scanned.length} item(s) checked</summary>
+      <ul>${rows.scanned.map((k, n) => `<li style="cursor:default"><span>${esc(k.title)}</span><span class="n">${k.page ? "page saved" : k.files ? `${k.files} file(s)` : esc(k.kind || "")}</span>${addBtn("scanned", n, k)}</li>`).join("")}</ul></details>` : ""}
+    ${rows.skipped.length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">${rows.skipped.length} web link(s) skipped (Colab, blogs, web pages, not files)</summary>
+      <ul>${rows.skipped.slice(0, 40).map((k, n) => `<li style="cursor:default"><span>${esc(k.text)}</span><span class="n">${esc(k.line || k.section || "")}</span>${addBtn("skipped", n, k)}</li>`).join("")}</ul></details>` : ""}`;
+  const isIn = (list) => list.every((f) => found.some((x) => x.key === f.key));
   const renderFound = () => {
     $("found").innerHTML = found.slice(0, 80).map((f) => `<li style="cursor:default"><span>${esc(f.fileName || f.ctx.link_text || "file")}</span><span class="n">${esc(f.ctx.item_title || f.ctx.chain[0] || "")}</span></li>`).join("");
     $("go").disabled = !found.length;
     $("go").textContent = `Download ${found.length} new file(s)`;
+    for (const b of document.querySelectorAll("button.add")) {   // + (add) or ✓ (in the downloads: click to take out)
+      const on = isIn(pick[`${b.dataset.where}:${b.dataset.n}`]);
+      b.textContent = on ? "✓" : "+";
+      b.classList.toggle("on", on);
+      b.title = on ? "In the downloads: click to take it out" : "Add to the downloads";
+    }
   };
-  renderFound();
   for (const b of document.querySelectorAll("button.add")) {
     b.addEventListener("click", () => {
-      const k = res[b.dataset.where][+b.dataset.n];
-      const f = linkDownload(k.add || k);
-      if (!found.some((x) => x.key === f.key)) found.push(f);
-      b.disabled = true;
-      b.textContent = "✓";
+      const list = pick[`${b.dataset.where}:${b.dataset.n}`];
+      if (isIn(list)) found = found.filter((x) => !list.some((f) => f.key === x.key));
+      else for (const f of list) if (!found.some((x) => x.key === f.key)) found.push(f);
       renderFound();
     });
   }
+  renderFound();
   $("go").addEventListener("click", async () => {
     $("go").disabled = true;
     // Sheets and slides first, notebooks/code last, so practical folders exist when code arrives.

@@ -157,6 +157,9 @@ def main():
         "practicals-only section": "prac2.zip" in by_name and "Practical 2" in by_name["prac2.zip"]["ctx"]["chain"],
         "file sitting at the top level": "handbook.pdf" in by_name,
         "written lecture page in a term folder": any(n.startswith("Lecture 12") and n.endswith(".html") for n in by_name),
+        "a folder knows every file inside it (to add it whole)": all(f.get("from") for f in res2.get("files", []))
+            and res2.get("tree", {}).get("_31111_1") == "_3111_1" and res2["tree"].get("_311_1") == "_31_1",
+        "an item with neither file nor link can still be added": any(k.get("add") for k in res.get("scanned", [])),
         "no duplicates": len(names) == len(set(f["key"] for f in res.get("files", []))),
     }
     for name, ok in checks.items():

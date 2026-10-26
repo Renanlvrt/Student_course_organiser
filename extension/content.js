@@ -157,11 +157,13 @@
     const scanned = [];                            // every item looked at, shown in the popup
     const seen = new Set();
     const top = await listAll(`/v1/courses/${courseId}/contents`);
-    const queue = top.filter((c) => sectionIds.includes(c.id)).map((c) => ({ node: c, chain: [] }));
+    const queue = top.filter((c) => sectionIds.includes(c.id)).map((c) => ({ node: c, chain: [], parent: null }));
+    const tree = {};                               // item -> the item it sits in (to add a whole folder)
     const visited = new Set();
     const tryList = (path) => listAll(path).catch(() => []);
 
-    async function visit({ node, chain }) {
+    async function visit({ node, chain, parent }) {
+      tree[node.id] = parent;
       const title = clean(node.title);
       // Ultra keeps a document's text and files in an internal "ultraDocumentBody" child: it stands for its parent.
       const junk = /^ultra\s*document\s*body/i.test(title);
@@ -173,11 +175,11 @@
         tryList(`/v1/courses/${courseId}/contents/${node.id}/children`),   // folders, modules, documents alike
         tryList(`/v1/courses/${courseId}/contents/${node.id}/attachments`)]);
       const handler = (item.contentHandler && item.contentHandler.id) || "";
-      for (const k of kids) queue.push({ node: k, chain: innerChain });
+      for (const k of kids) queue.push({ node: k, chain: innerChain, parent: node.id });
       // A link to another item of the course: collect that item as well.
       const target = item.contentHandler && (item.contentHandler.targetId || item.contentHandler.target_id);
       if (target && !visited.has(target)) {
-        try { queue.push({ node: await api(`/v1/courses/${courseId}/contents/${target}`), chain: innerChain }); } catch (e) { /* gone */ }
+        try { queue.push({ node: await api(`/v1/courses/${courseId}/contents/${target}`), chain: innerChain, parent: node.id }); } catch (e) { /* gone */ }
       }
       const mine = [];
       for (const a of atts) {
@@ -210,11 +212,14 @@
                     key: `${courseId}:page:${innerChain.join("/")}` });
         page = true;
       }
+      for (const f of mine) f.from = node.id;
       files.push(...mine);
       // An item with a link but nothing downloaded can still be added by hand in the popup.
       const link = !mine.length && (extUrl || (notFiles[0] && notFiles[0].href));
       if (!junk || mine.length) scanned.push({ title: shown, path: [...chain].reverse().join(" › "), files: mine.length, page,
-        kind: handler.replace(/^resource\/x-bb-/, ""), add: link ? { href: link, text: title, ctx: { ...ctx, link_text: title } } : null });
+        kind: handler.replace(/^resource\/x-bb-/, ""), id: node.id,
+        add: link ? { href: link, text: title, ctx: { ...ctx, link_text: title } }
+          : !mine.length && words && !/folder/i.test(handler) ? { file: { ...pageFile(courseId, { ...item, title: shown }, body, ctx), from: node.id } } : null });
     }
 
     // Several items at a time: each needs its details, children and attachments.
@@ -232,7 +237,7 @@
       };
       pump();
     });
-    return { files: files.filter((f) => !seen.has(f.key) && seen.add(f.key)), skipped, scanned };
+    return { files: files.filter((f) => !seen.has(f.key) && seen.add(f.key)), skipped, scanned, tree };
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
